@@ -1,6 +1,8 @@
 #ifndef LINE_SENSORS_H
 #define LINE_SENSORS_H
 #include "component.h"
+
+template <size_t N>
 class LineSensors : public Component
 {
 public:
@@ -13,8 +15,7 @@ public:
     };
 
 private:
-    const int *sensor_pins;
-    const size_t num_sensors;
+    const int (&sensor_pins)[N];
 
     bool detects_line(pin sensor_pin)
     {
@@ -22,14 +23,12 @@ private:
     }
 
 public:
-    LineSensors(const int *pins,
-                size_t num_pins)
-        : sensor_pins(pins),
-          num_sensors(num_pins) {}
+    LineSensors(const int (&pins)[N])
+        : sensor_pins(pins) {}
 
     void setup()
     {
-        for (size_t i = 0; i < num_sensors; ++i)
+        for (size_t i = 0; i < N; ++i)
         {
             pinMode(sensor_pins[i], INPUT_PULLUP);
         }
@@ -37,9 +36,7 @@ public:
 
     bool left_detected()
     {
-        if (num_sensors == 1)
-            return detects_line(sensor_pins[0]);
-        const size_t half_size = num_sensors / 2;
+        const size_t half_size = N / 2;
         for (size_t i = 0; i < half_size; ++i)
         {
             if (detects_line(sensor_pins[i]))
@@ -50,10 +47,8 @@ public:
 
     bool right_detected()
     {
-        if (num_sensors == 1)
-            return detects_line(sensor_pins[0]);
-        const size_t half_size = num_sensors / 2;
-        for (size_t i = half_size; i < num_sensors; ++i)
+        const size_t half_size = N / 2;
+        for (size_t i = half_size; i < N; ++i)
         {
             if (detects_line(sensor_pins[i]))
                 return true;
