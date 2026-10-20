@@ -21,7 +21,7 @@ public:
     void setup()
     {
         servo.attach(servo_pin);
-        close();
+        open();
     }
 
     void open()

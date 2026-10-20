@@ -11,7 +11,8 @@ public:
         NONE,
         LEFT,
         RIGHT,
-        BOTH
+        MIDDLE,
+        INTERSECTION
     };
 
 private:
@@ -19,7 +20,38 @@ private:
 
     bool detects_line(pin sensor_pin)
     {
-        return digitalRead(sensor_pin);
+        return analogRead(sensor_pin);
+    }
+
+    bool is_middle_sensor(size_t sensor_index) const
+    {
+        const size_t middle = N / 2;
+        return N % 2 == 0
+                   ? sensor_index == middle - 1 || sensor_index == middle
+                   : sensor_index == middle;
+    }
+
+    bool is_left_sensor(size_t sensor_index) const
+    {
+        return sensor_index < N / 2 && !is_middle_sensor(sensor_index);
+    }
+
+    bool is_right_sensor(size_t sensor_index) const
+    {
+        return sensor_index >= N / 2 && !is_middle_sensor(sensor_index);
+    }
+
+    bool side_detected(bool left_side)
+    {
+        for (size_t index = 0; index < N; ++index)
+        {
+            const bool belongs_to_side = left_side
+                                             ? is_left_sensor(index)
+                                             : is_right_sensor(index);
+            if (belongs_to_side && detects_line(sensor_pins[index]))
+                return true;
+        }
+        return false;
     }
 
 public:
@@ -36,34 +68,55 @@ public:
 
     bool left_detected()
     {
-        const size_t half_size = N / 2;
-        for (size_t i = 0; i < half_size; ++i)
-        {
-            if (detects_line(sensor_pins[i]))
-                return true;
-        }
-        return false;
+        return side_detected(true);
     }
 
     bool right_detected()
     {
-        const size_t half_size = N / 2;
-        for (size_t i = half_size; i < N; ++i)
-        {
-            if (detects_line(sensor_pins[i]))
-                return true;
-        }
-        return false;
+        return side_detected(false);
     }
 
-    bool line_detected()
+    bool middle_detected()
     {
-        return left_detected() || right_detected();
+        bool middle_found = false;
+        for (size_t index = 0; index < N; ++index)
+        {
+            const bool detected = detects_line(sensor_pins[index]);
+            if (is_middle_sensor(index))
+                middle_found = middle_found || detected;
+            else if (detected)
+                return false;
+        }
+        return middle_found;
     }
 
     int raw_read(size_t sensor_index = 0)
     {
-        return digitalRead(sensor_pins[sensor_index]);
+        return analogRead(sensor_pins[sensor_index]);
+    }
+
+    bool read_line_error(int &error)
+    {
+        long weighted_position = 0;
+        int detected_sensors = 0;
+
+        for (size_t index = 0; index < N; ++index)
+        {
+            if (!detects_line(sensor_pins[index]))
+                continue;
+
+            const long position = N == 1
+                                      ? 0
+                                      : -1000L + (2000L * index) / (N - 1);
+            weighted_position += position;
+            ++detected_sensors;
+        }
+
+        if (detected_sensors == 0)
+            return false;
+
+        error = weighted_position / detected_sensors;
+        return true;
     }
 
     bool intersection_detected()
@@ -74,10 +127,14 @@ public:
     State read()
     {
         const bool left = left_detected();
+        const bool middle = middle_detected();
         const bool right = right_detected();
+        const bool intersection = intersection_detected();
 
-        if (left && right)
-            return BOTH;
+        if (intersection)
+            return INTERSECTION;
+        if (middle)
+            return MIDDLE;
         if (left)
             return LEFT;
         if (right)

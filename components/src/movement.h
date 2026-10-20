@@ -26,6 +26,7 @@ public:
     void move_backward(int speed);
     void move_left(int speed);
     void move_right(int speed);
+    void stop();
 };
 
 void Movement::setup()
@@ -49,9 +50,9 @@ void Movement::update_speed(int speed)
 
 void Movement::move(int left_speed, int right_speed)
 {
-    digitalWrite(trigger_l, HIGH);
-    digitalWrite(trigger_r, HIGH);
-    update_speed(left_speed, right_speed);
+    digitalWrite(trigger_l, left_speed >= 0 ? HIGH : LOW);
+    digitalWrite(trigger_r, right_speed >= 0 ? HIGH : LOW);
+    update_speed(abs(left_speed), abs(right_speed));
 }
 
 void Movement::move_forward(int speed)
@@ -72,6 +73,11 @@ void Movement::move_left(int speed)
 void Movement::move_right(int speed)
 {
     move(speed, speed);
+}
+
+void Movement::stop()
+{
+    update_speed(0);
 }
 
 #endif // MOVEMENT_H
