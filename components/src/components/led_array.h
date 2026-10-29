@@ -25,6 +25,20 @@ public:
         }
     }
 
+    void turn_only(size_t index)
+    {
+        turn_off_all();
+        set_led(index, true);
+    }
+
+    void turn_off_all()
+    {
+        for (size_t i = 0; i < N; ++i)
+        {
+            digitalWrite(pins[i], LOW);
+        }
+    }
+
 private:
     const int (&pins)[N];
 };

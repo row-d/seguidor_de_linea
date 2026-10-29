@@ -8,6 +8,13 @@ struct RgbColor
     uint16_t red;
     uint16_t green;
     uint16_t blue;
+
+    inline bool close_to(const RgbColor &other, uint16_t tolerance) const
+    {
+        return (abs(static_cast<int>(red) - static_cast<int>(other.red)) <= tolerance) &&
+               (abs(static_cast<int>(green) - static_cast<int>(other.green)) <= tolerance) &&
+               (abs(static_cast<int>(blue) - static_cast<int>(other.blue)) <= tolerance);
+    }
 };
 
 class ColorSensor : public Component

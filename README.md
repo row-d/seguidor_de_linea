@@ -20,15 +20,17 @@ components/
   library.properties        Metadatos y dependencias de la biblioteca
   src/
     RobotComponents.h       Cabecera publica de la biblioteca
-    robot.h                 Logica del controlador y tarea FreeRTOS
-    movement.h              Motores y direccion
-    line_sensors.h          Sensores de linea y calculo del error
-    color_sensor.h          Lectura y comparacion de color
-    claw.h                  Garra controlada por servo
-    buzzer.h                Zumbador
-    led_array.h             LEDs de giro
-    ultrasonic_sensor.h      Medicion de distancia
-    component.h             Interfaz comun de componentes
+    components/             Componentes reutilizables del robot
+      movement.h            Motores y direccion
+      line_sensors.h        Sensores de linea y calculo del error
+      color_sensor.h        Lectura y comparacion de color
+      claw.h                Garra controlada por servo
+      buzzer.h               Zumbador
+      led_array.h            LEDs de giro
+      ultrasonic_sensor.h    Medicion de distancia
+      component.h            Interfaz comun de componentes
+    tasks/                  Tareas y control del robot
+      robot.h               Logica del controlador y tarea FreeRTOS
 scripts/
   link-library.ps1          Enlace simbolico para Windows
   link-library.sh           Enlace simbolico para Linux/macOS
@@ -37,14 +39,15 @@ scripts/
 ## Requisitos
 
 - Arduino IDE o Arduino CLI.
-- La placa Arduino compatible con el montaje y seleccionada en el IDE.
+- Arduino Mega, seleccionada en el IDE.
 - Bibliotecas Arduino:
   - `Servo`
   - `Arduino_FreeRTOS`
+  - `PID` (`PID_v1`)
 - Git, para colaborar con el proyecto.
 - En Windows, permisos para crear enlaces simbolicos. Si el script falla, ejecuta VS Code o PowerShell con los permisos necesarios o crea el enlace desde una terminal con permisos adecuados.
 
-La placa concreta y el esquema electrico todavia deben documentarse. No cambies los pines sin comprobar primero el cableado real.
+El esquema usa una Arduino Mega. No cambies los pines sin comprobar primero el cableado real.
 
 ## Preparar el entorno
 
@@ -82,13 +85,13 @@ Estos valores estan definidos en `seguidor_de_linea.ino`:
 
 | Componente | Pines o configuracion |
 | --- | --- |
-| Motor izquierdo | Direccion `2`, PWM `3` |
-| Motor derecho | Direccion `4`, PWM `5` |
-| Zumbador | `6` |
+| L298N MDV, lado izquierdo | `E1=2` (PWM), `M1=3` (sentido); conecta aqui las dos ruedas izquierdas en paralelo |
+| L298N MDV, lado derecho | `E2=4` (PWM), `M2=5` (sentido); conecta aqui las dos ruedas derechas en paralelo |
+| Zumbador | `10` |
 | Garra / servo | `8`, abierta a `20` grados, cerrada a `90` grados |
-| Sensores de linea | Analogicos `0`, `1`, `2` |
-| LEDs de giro | `10`, `11` |
-| Ultrasonico | Trigger `12`, echo `13` |
+| Sensores de linea | Analogicos `A0`, `A1`, `A2` |
+| LEDs de giro | `11`, `12` |
+| Ultrasonico | Trigger `7`, echo `6` |
 | Sensor RGB | Pendiente de conectar en `read_rgb_sensor()` |
 
 Comprueba que los pines PWM y los niveles de direccion coincidan con el driver de motores usado por el hardware.
@@ -117,13 +120,12 @@ Sustituye `<fabricante:arquitectura:placa>` y `<puerto>` por los valores de tu i
 
 En cada iteracion de la tarea:
 
-1. Lee la distancia del sensor ultrasonico.
-2. Si hay un obstaculo, ejecuta la secuencia de la garra.
-3. Si no hay obstaculo, calcula el error de posicion de la linea.
-4. Aplica la correccion proporcional, integral y derivativa a los motores.
-5. Actualiza los LEDs de giro y espera 30 ms.
+1. Calcula la posicion de la linea con los sensores izquierdo, central y derecho.
+2. Usa `PID_v1` para convertir ese error en una correccion diferencial de los motores.
+3. Usa los sensores laterales para detectar intersecciones y conserva el ultimo error cuando se pierde la linea.
+4. Recupera la linea alternando el sentido de busqueda tras cuatro ciclos sin deteccion y espera 30 ms con FreeRTOS.
 
-Los parametros del controlador estan en `components/src/robot.h`: velocidad base `170`, ganancias `0.12`, `0.002` y `0.35`, y limite de obstaculo de `15` cm.
+Los parametros del controlador estan en `components/src/tasks/start.h`: velocidad base `170`, ganancias `0.12`, `0.002` y `0.35`, y periodo de control de `30` ms.
 
 ## Flujo de desarrollo
 

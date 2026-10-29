@@ -15,11 +15,11 @@ public:
         pinMode(pin, OUTPUT);
     }
 
-    void beep(int duration_ms)
+    void beep(int duration_ms, unsigned int frequency = 2000)
     {
-        digitalWrite(pin, HIGH);
+        tone(pin, frequency, duration_ms);
         delay(duration_ms);
-        digitalWrite(pin, LOW);
+        noTone(pin);
     }
 };
 #endif
