@@ -59,7 +59,8 @@ public:
     {
         for (size_t i = 0; i < N; ++i)
         {
-            pinMode(sensor_pins[i], INPUT_PULLUP);
+            // Sin pull-up: con un cable flojo la lectura subia sola y parecia linea.
+            pinMode(sensor_pins[i], INPUT);
         }
     }
 
@@ -114,6 +115,16 @@ public:
         return line_thresholds[N / 2];
     }
 
+    void set_threshold(size_t sensor_index, int threshold)
+    {
+        line_thresholds[sensor_index] = threshold;
+    }
+
+    int threshold(size_t sensor_index)
+    {
+        return line_thresholds[sensor_index];
+    }
+
     bool read_line_error(int &error)
     {
         long weighted_position = 0;
@@ -141,7 +152,10 @@ public:
 
     bool intersection_detected()
     {
-        return detects_line(0) && detects_line(N - 1) && !middle_detected();
+        const bool center = N % 2 == 1
+                                ? detects_line(N / 2)
+                                : detects_line(N / 2) || detects_line(N / 2 - 1);
+        return detects_line(0) && detects_line(N - 1) && !center;
     }
 
     bool all_detected()

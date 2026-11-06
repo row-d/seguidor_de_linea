@@ -2,7 +2,7 @@
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-source="$(cd -- "$script_dir/../components" && pwd)"
+source="$(cd -- "$script_dir/../firmware" && pwd)"
 sketchbook="${ARDUINO_SKETCHBOOK:-$HOME/Arduino}"
 destination="$sketchbook/libraries/RobotComponents"
 

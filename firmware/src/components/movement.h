@@ -11,6 +11,19 @@ private:
     pin enable_r;
     pin direction_r;
     int max_speed = 255;
+    // PWM minimo con el que una rueda gira de verdad. Por debajo el motor zumba pero
+    // no se mueve, y en una curva la rueda interior frena al robot.
+    int min_speed = 125;
+
+    // Una velocidad pequena se lleva a 0 en vez de subirla al minimo: asi la rueda
+    // interior puede detenerse del todo y el robot pivotea en las curvas cerradas.
+    int effective_speed(int speed)
+    {
+        const int magnitude = abs(speed);
+        if (magnitude < min_speed / 2)
+            return 0;
+        return magnitude < min_speed ? min_speed : magnitude;
+    }
 
 public:
     Movement(pin _enable_l, pin _direction_l,
@@ -25,6 +38,7 @@ public:
     void update_speed(int speed);
     void move_forward(int speed);
     void move_forward(int speed_l, int speed_r);
+    void drive(int speed_l, int speed_r);
     void move_backward(int speed);
     void move_left(int speed, int direction = HIGH);
     void move_right(int speed, int direction = HIGH);
@@ -68,6 +82,14 @@ void Movement::move_forward(int speed_l, int speed_r)
     digitalWrite(direction_l, LOW);
     digitalWrite(direction_r, HIGH);
     update_speed(speed_l, speed_r);
+}
+
+// Velocidades con signo: un valor negativo hace girar ese lado hacia atras.
+void Movement::drive(int speed_l, int speed_r)
+{
+    digitalWrite(direction_l, speed_l >= 0 ? LOW : HIGH);
+    digitalWrite(direction_r, speed_r >= 0 ? HIGH : LOW);
+    update_speed(effective_speed(speed_l), effective_speed(speed_r));
 }
 
 void Movement::move_backward(int speed)

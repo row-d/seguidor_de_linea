@@ -5,7 +5,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$source = Join-Path $PSScriptRoot '..\components' | Resolve-Path
+$source = Join-Path $PSScriptRoot '..\firmware' | Resolve-Path
 $sketchbook = if ($env:ARDUINO_SKETCHBOOK) {
     $env:ARDUINO_SKETCHBOOK
 } else {

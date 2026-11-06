@@ -1,4 +1,5 @@
 #include <RobotComponents.h>
+#include "bluetooth_config.h"
 
 void read_rgb_sensor(RgbColor &color)
 {
@@ -17,6 +18,9 @@ Buzzer buzzer{10};
 const int turn_led_pins[] = {11, 12};
 LedArray<2> turn_leds{turn_led_pins};
 UltrasonicSensor obstacle_sensor{7, 6};
+// Serial1: Bluetooth. Serial: USB.
+Logger logger{Serial1, BLUETOOTH_BAUD};
+Hc05 bluetooth{Serial1, Serial};
 
 Robot<3> robot_controller{
     mov,
@@ -25,13 +29,30 @@ Robot<3> robot_controller{
     claw_l,
     buzzer,
     turn_leds,
-    obstacle_sensor};
+    obstacle_sensor,
+    logger};
+
+const bool calibration_mode = false;
+const Route preferred_route = ROUTE_RIGHT;
 
 void setup()
 {
-    Serial.begin(9600);
+    if (BLUETOOTH_SETUP_MODE)
+    {
+        mov.setup();
+        Serial.begin(9600);
+        bluetooth.setup();
+        const bool configured = bluetooth.configure(BLUETOOTH_NAME, BLUETOOTH_BAUD);
+        Serial.println(configured ? "bluetooth,ok" : "bluetooth,error");
+        return;
+    }
+    // Serial.begin(9600);
+    robot_controller.load_calibration();
     robot_controller.setup();
-    robot_controller.start();
+    if (calibration_mode)
+        robot_controller.calibrate();
+    else
+        robot_controller.start(preferred_route);
 }
 
 void loop() {}

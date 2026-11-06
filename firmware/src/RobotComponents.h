@@ -9,7 +9,11 @@
 #include "components/buzzer.h"
 #include "components/led_array.h"
 #include "components/ultrasonic_sensor.h"
+#include "components/logger.h"
+#include "components/hc05.h"
 #include "tasks/robot.h"
+#include "tasks/calibration.h"
+#include "tasks/collision.h"
 #include "tasks/debug.h"
 #include "tasks/start.h"
 
