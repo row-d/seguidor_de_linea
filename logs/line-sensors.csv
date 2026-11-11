@@ -1,8 +1,0 @@
-﻿event,2623,object_removed
-t,3275,424,54,45,-1000,-150,-20,280,1
-event,3443,object_detected
-event,5761,object_removed
-t,6413,458,57,61,-1000,-150,-20,280,1
-event,6479,route_right
-event,6683,object_detected
-event,8999,object_removed

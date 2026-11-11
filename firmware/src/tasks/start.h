@@ -44,21 +44,6 @@ CrossResult Robot<N>::cross_horizontal_line()
     return line_sensors.sensor_detected(N / 2) ? CROSS_CONTINUE : CROSS_FORK;
 }
 
-// Cabecera de cada registro: umbrales en uso (los de la EEPROM si hay calibracion
-// guardada) y nombres de las columnas de telemetria.
-template <size_t N>
-void Robot<N>::log_header()
-{
-    logger.print("thresholds");
-    for (size_t index = 0; index < N; ++index)
-    {
-        logger.print(',');
-        logger.print(line_sensors.threshold(index));
-    }
-    logger.println("");
-    logger.println("t,ms,s0,s1,s2,error,correction,left,right,line");
-}
-
 template <size_t N>
 void Robot<N>::show_route(Route route)
 {
@@ -91,14 +76,45 @@ void Robot<N>::halt(const char *reason)
     movement.stop();
     leds.turn_off_all();
     logger.event(reason);
+    // Sin tarea de control, una calibracion pedida despues empieza enseguida.
+    control_task = nullptr;
     vTaskDelete(nullptr);
 }
 
+// Detiene el recorrido en marcha desde otra tarea: borra la tarea de control y para los
+// motores. La llama la tarea de telemetria cuando el PC lo pide. Sin recorrido en marcha
+// solo para los motores. Despues, start() empieza un recorrido nuevo desde cero.
 template <size_t N>
-void Robot<N>::start(Route route)
+void Robot<N>::stop()
 {
-    preferred_route = route;
-    xTaskCreate([](void *parameter)
+    // Con el planificador detenido, la tarea de control no puede terminar por su cuenta
+    // (halt) entre la comprobacion y el borrado.
+    vTaskSuspendAll();
+    if (control_task != nullptr)
+    {
+        vTaskDelete(control_task);
+        control_task = nullptr;
+    }
+    xTaskResumeAll();
+
+    movement.stop();
+    leds.turn_off_all();
+}
+
+// Empieza un recorrido: crea la tarea de control "Start". Se llama en setup(), para
+// que el robot arranque al encender, y desde la tarea de telemetria cuando el PC pide
+// otro recorrido. Devuelve false si ya hay un recorrido en marcha,
+// si hay una calibracion pendiente o si no queda memoria para la tarea.
+template <size_t N>
+bool Robot<N>::start()
+{
+    if (control_task != nullptr || calibration_requested || calibration_state != CALIBRATION_IDLE)
+        return false;
+
+    // Un recorrido nuevo no hereda las bifurcaciones del anterior.
+    route_memory.clear();
+    leds.turn_off_all();
+    return xTaskCreate([](void *parameter)
                 {
                     Robot<N> *robot = static_cast<Robot<N> *>(parameter);
                     int search_direction = -1;
@@ -116,7 +132,7 @@ void Robot<N>::start(Route route)
                     // Tiempo sin buscar otra bifurcacion despues de salir de una.
                     const unsigned long fork_hold_ms = 1000;
                     const long obstacle_distance_cm = 15;
-                    // Cada cuantos ciclos (~160 ms) se mide distancia y se envia telemetria.
+                    // Cada cuantos ciclos (~160 ms) se mide distancia.
                     const uint8_t slow_period_cycles = 5;
                     // Si encontrar la linea tarda esto o mas, el giro fue de media vuelta:
                     // la linea se acabo y el robot la recupero detras. Unos 110 grados.
@@ -147,12 +163,11 @@ void Robot<N>::start(Route route)
                     double line_error = 0;
                     double pid_output = 0;
                     double target = 0;
-                    // Con error 500 (linea entre el centro y un lado) la correccion es 125:
-                    // la rueda interior se detiene y la exterior va al maximo.
-                    const double proportional_gain = 0.25;
-                    const double integral_gain = 0.0;
-                    // PID_v1 divide Kd entre el periodo en segundos (0.005 / 0.025 = 0.2 por muestra).
-                    const double derivative_gain = 0.005;
+                    // Ganancias guardadas en EEPROM o las de robot.h (ver pid_gains.h).
+                    float proportional_gain;
+                    float integral_gain;
+                    float derivative_gain;
+                    robot->read_gains(proportional_gain, integral_gain, derivative_gain);
                     PID line_pid(&line_error, &pid_output, &target,
                                  proportional_gain, integral_gain, derivative_gain, REVERSE);
 
@@ -160,14 +175,29 @@ void Robot<N>::start(Route route)
                     line_pid.SetSampleTime(pid_sample_time_ms);
                     line_pid.SetMode(AUTOMATIC);
 
-                    // Cada cuantos ciclos (~100 ms) se envia una fila mientras se registra.
-                    // Una fila ocupa unos 45 bytes: a 9600 baudios caben unas 20 por segundo.
-                    const uint8_t telemetry_period_cycles = 3;
-                    uint8_t telemetry_cycle = 0;
-
                     while(1){
-                        if (robot->logger.poll_commands())
-                            robot->log_header();
+                        if (robot->gains_changed)
+                        {
+                            // El PC cambio las ganancias: valen desde este ciclo.
+                            robot->read_gains(proportional_gain, integral_gain, derivative_gain);
+                            line_pid.SetTunings(proportional_gain, integral_gain, derivative_gain);
+                        }
+
+                        if (robot->calibration_requested)
+                        {
+                            // Cede el turno a la tarea de calibracion y espera a que termine.
+                            // La calibracion no cuenta como recorrido: al terminar sigue la linea.
+                            const unsigned long calibration_start = millis();
+                            robot->movement.stop();
+                            robot->calibration_requested = false;
+                            xTaskNotifyGive(robot->calibration_task);
+                            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+                            const unsigned long calibration_ms = millis() - calibration_start;
+                            branch_started_at += calibration_ms;
+                            return_started_at += calibration_ms;
+                            searching = false;
+                            continue;
+                        }
 
                         int current_error = 0;
                         const bool line_detected = robot->line_sensors.read_line_error(current_error);
@@ -340,24 +370,26 @@ void Robot<N>::start(Route route)
                         }
                         robot->movement.drive(speed_l, speed_r);
 
-                        telemetry_cycle = telemetry_cycle + 1 >= telemetry_period_cycles ? 0 : telemetry_cycle + 1;
-                        if (telemetry_cycle == 0 && robot->logger.is_recording())
+                        // Publica la muestra del ciclo: la tarea de telemetria toma la mas
+                        // reciente cuando le toca enviar, sin frenar el control.
+                        if (robot->logger.is_recording())
                         {
-                            int row[N + 5];
+                            TelemetrySample sample;
+                            sample.ms = millis();
                             for (size_t index = 0; index < N; ++index)
-                                row[index] = robot->line_sensors.raw_read(index);
-                            row[N] = current_error;
-                            row[N + 1] = correction;
-                            row[N + 2] = speed_l;
-                            row[N + 3] = speed_r;
-                            row[N + 4] = line_detected;
-                            robot->logger.telemetry(row, N + 5);
+                                sample.raw[index] = robot->line_sensors.raw_read(index);
+                            sample.error = current_error;
+                            sample.correction = correction;
+                            sample.speed_l = speed_l;
+                            sample.speed_r = speed_r;
+                            sample.line_detected = line_detected;
+                            xQueueOverwrite(robot->telemetry_samples, &sample);
                         }
 
                         vTaskDelay(control_period_ticks);
                     } },
                 // En AVR el tamano del stack esta en bytes y el objeto PID vive en el.
-                "Start", 768, this, 2, nullptr);
+                "Start", 768, this, 2, &control_task) == pdPASS;
 }
 
 #endif

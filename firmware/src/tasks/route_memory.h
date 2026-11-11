@@ -49,6 +49,11 @@ public:
         return count;
     }
 
+    void clear()
+    {
+        count = 0;
+    }
+
     // stem_ms: tiempo que tardo en llegar desde la bifurcacion anterior.
     bool push(Route first_route, unsigned long stem_ms)
     {

@@ -32,7 +32,6 @@ Robot<3> robot_controller{
     obstacle_sensor,
     logger};
 
-const bool calibration_mode = false;
 const Route preferred_route = ROUTE_RIGHT;
 
 void setup()
@@ -48,11 +47,11 @@ void setup()
     }
     // Serial.begin(9600);
     robot_controller.load_calibration();
+    robot_controller.load_gains();
+    robot_controller.set_route(preferred_route);
     robot_controller.setup();
-    if (calibration_mode)
-        robot_controller.calibrate();
-    else
-        robot_controller.start(preferred_route);
+    // Empieza el recorrido al encender. Cuando termina, el PC puede pedir otro (comando g).
+    robot_controller.start();
 }
 
 void loop() {}
