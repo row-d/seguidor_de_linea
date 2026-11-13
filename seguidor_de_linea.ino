@@ -18,8 +18,8 @@ Buzzer buzzer{10};
 const int turn_led_pins[] = {11, 12};
 LedArray<2> turn_leds{turn_led_pins};
 UltrasonicSensor obstacle_sensor{7, 6};
-// Serial1: Bluetooth. Serial: USB.
-Logger logger{Serial1, BLUETOOTH_BAUD};
+// Serial1: Bluetooth. Serial: USB. Se elige con COMMANDS_OVER_USB en bluetooth_config.h.
+Logger logger{COMMANDS_OVER_USB ? Serial : Serial1, BLUETOOTH_BAUD};
 Hc05 bluetooth{Serial1, Serial};
 
 Robot<3> robot_controller{
@@ -48,6 +48,7 @@ void setup()
     // Serial.begin(9600);
     robot_controller.load_calibration();
     robot_controller.load_gains();
+    robot_controller.load_speeds();
     robot_controller.set_route(preferred_route);
     robot_controller.setup();
     // Empieza el recorrido al encender. Cuando termina, el PC puede pedir otro (comando g).

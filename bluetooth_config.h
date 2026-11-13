@@ -9,4 +9,9 @@ const unsigned long BLUETOOTH_BAUD = 9600;
 // El modulo debe estar en modo AT: ver "Configurar el Bluetooth" en el README.
 const bool BLUETOOTH_SETUP_MODE = false;
 
+// Por donde llegan los comandos del PC y sale la telemetria.
+// true: por el cable USB de la Mega. Sirve para probar cuando el Bluetooth no conecta.
+// false: por el Bluetooth (HC-05), sin cable.
+const bool COMMANDS_OVER_USB = true;
+
 #endif

@@ -15,9 +15,37 @@
 #include "../components/logger.h"
 #include "route_memory.h"
 
-const int BASE_SPEED = 130;
-// Girar sobre su eje arrastra las 4 ruedas de lado: con 185 el robot no se movia.
-const int TURN_SPEED = 230;
+// Velocidades (PWM, 0..255). Se cambian desde el PC con el comando b y se guardan en
+// EEPROM (ver speed_settings.h); estos valores solo valen si no hay otros guardados.
+struct SpeedSettings
+{
+    // Velocidad de avance sobre la linea.
+    int base;
+    // Velocidad del lado que empuja en un giro.
+    int turn;
+    // PWM minimo con el que una rueda gira de verdad (ver Movement::set_min_speed).
+    int min;
+};
+// La tarea de telemetria las cambia; las demas solo las leen.
+static SpeedSettings speed_settings = {130, 230, 125};
+
+// Giro tipo tanque. Se cambia desde el PC con el comando t y se guarda en EEPROM (ver
+// speed_settings.h); este valor solo vale si no hay otro guardado.
+// true: gira sobre su eje, con un lado hacia adelante y el otro hacia atras. Es el giro
+// mas cerrado, pero arrastra las 4 ruedas de lado: con poca bateria los motores no
+// tienen fuerza y el robot se queda quieto.
+// false: gira con un lado detenido y el otro avanzando, en un arco corto. Pide menos
+// fuerza.
+static bool tank_turn = true;
+
+// Velocidad de cada lado para girar hacia direction: -1 izquierda, 1 derecha.
+inline void turn_speeds(int direction, int &left, int &right)
+{
+    const int outer = speed_settings.turn;
+    const int inner = tank_turn ? -outer : 0;
+    left = direction < 0 ? inner : outer;
+    right = direction < 0 ? outer : inner;
+}
 
 // Ganancias del PID si no hay otras guardadas en EEPROM (ver pid_gains.h).
 // Con Kp 0.25 y error 500 (linea entre el centro y un lado) la correccion es 125:
@@ -26,6 +54,10 @@ const float DEFAULT_PID_KP = 0.25;
 const float DEFAULT_PID_KI = 0.0;
 // PID_v1 divide Kd entre el periodo en segundos (0.005 / 0.025 = 0.2 por muestra).
 const float DEFAULT_PID_KD = 0.005;
+
+// Definidos en start.h y line_follower.h.
+struct RunState;
+struct WheelSpeeds;
 
 enum CrossResult
 {
@@ -83,6 +115,11 @@ private:
     float pid_ki = DEFAULT_PID_KI;
     float pid_kd = DEFAULT_PID_KD;
     volatile bool gains_changed = false;
+    // Motivo y hora de la ultima vez que el programa detuvo el robot (nullptr: ninguna
+    // en este recorrido). Se guarda aunque no haya registro ni Bluetooth, para poder
+    // consultarlo despues. Lo escribe la tarea de control con note_stop().
+    const char *last_stop_reason = nullptr;
+    unsigned long last_stop_ms = 0;
     // Resultado de la ultima calibracion, que envia la tarea de telemetria.
     int calibration_minimums[N];
     int calibration_maximums[N];
@@ -92,18 +129,34 @@ private:
         vTaskDelay(pdMS_TO_TICKS(duration_ms));
     }
 
+    // Tarea de control (start.h): maniobras y pasos del ciclo.
+    void run();
     CrossResult cross_horizontal_line();
     void show_route(Route route);
+    void take_branch(RunState &state, Route side, uint32_t min_turn_ms);
+    void wait_calibration(RunState &state);
+    bool pass_start_line(RunState &state, bool line_detected);
+    void end_fork_wait(RunState &state);
+    void check_line_lost(RunState &state, bool line_detected);
+    bool see_fork(RunState &state);
+    bool follow_route(RunState &state, bool fork_seen);
+    bool go_back_to_fork(RunState &state, bool fork_seen);
+    bool remove_obstacle(RunState &state, bool line_detected);
+    void send_sample(int line_error, bool line_detected, const WheelSpeeds &speeds);
     void log_header();
     void log_calibration_report();
     void log_gains();
+    void log_speeds();
+    void log_last_stop();
+    void note_stop(const char *reason);
+    bool set_speeds(int base, int turn, int min);
     bool set_gains(float kp, float ki, float kd);
     void read_gains(float &kp, float &ki, float &kd);
     void request_calibration();
     void run_calibration();
     void start_services();
-    void turn_toward(Route side, uint32_t min_turn_ms);
-    void halt(const char *reason);
+    void turn_to(Route side, uint32_t min_turn_ms);
+    void end_run(const char *reason);
     void remove_object();
 
 public:
@@ -144,6 +197,8 @@ public:
     void stop();
     void load_calibration();
     void load_gains();
+    void load_speeds();
+    bool toggle_tank_turn();
     void debug();
 };
 

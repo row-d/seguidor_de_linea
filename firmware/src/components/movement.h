@@ -13,7 +13,7 @@ private:
     int max_speed = 255;
     // PWM minimo con el que una rueda gira de verdad. Por debajo el motor zumba pero
     // no se mueve, y en una curva la rueda interior frena al robot.
-    int min_speed = 125;
+    int min_speed = 80;
 
     // Una velocidad pequena se lleva a 0 en vez de subirla al minimo: asi la rueda
     // interior puede detenerse del todo y el robot pivotea en las curvas cerradas.
@@ -34,6 +34,11 @@ public:
     }
 
     void setup();
+    // PWM minimo con el que una rueda gira de verdad (0..255).
+    void set_min_speed(int speed)
+    {
+        min_speed = speed;
+    }
     void update_speed(int speed_l, int speed_r);
     void update_speed(int speed);
     void move_forward(int speed);

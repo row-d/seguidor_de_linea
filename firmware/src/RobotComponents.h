@@ -15,8 +15,10 @@
 #include "tasks/telemetry.h"
 #include "tasks/calibration.h"
 #include "tasks/pid_gains.h"
+#include "tasks/speed_settings.h"
 #include "tasks/collision.h"
 #include "tasks/debug.h"
+#include "tasks/line_follower.h"
 #include "tasks/start.h"
 
 #endif // ROBOT_COMPONENTS_H

@@ -4,7 +4,7 @@
 #include "robot.h"
 
 // Cabecera de cada registro: umbrales en uso (los de la EEPROM si hay calibracion
-// guardada), ganancias del PID y nombres de las columnas de telemetria.
+// guardada), ganancias del PID, velocidades y nombres de las columnas de telemetria.
 template <size_t N>
 void Robot<N>::log_header()
 {
@@ -16,7 +16,31 @@ void Robot<N>::log_header()
     }
     logger.println("");
     log_gains();
+    log_speeds();
+    log_last_stop();
     logger.println("t,ms,s0,s1,s2,error,correction,left,right,line");
+}
+
+// Formato CSV: last_stop,<ms>,<motivo>, o last_stop,none si el programa no detuvo el
+// robot en este recorrido. Sirve cuando el evento se perdio: sin registro activo o
+// con el Bluetooth cortado.
+template <size_t N>
+void Robot<N>::log_last_stop()
+{
+    taskENTER_CRITICAL();
+    const char *reason = last_stop_reason;
+    const unsigned long ms = last_stop_ms;
+    taskEXIT_CRITICAL();
+
+    if (reason == nullptr)
+    {
+        logger.println("last_stop,none");
+        return;
+    }
+    logger.print("last_stop,");
+    logger.print(ms);
+    logger.print(',');
+    logger.println(reason);
 }
 
 template <size_t N>
@@ -78,17 +102,32 @@ void Robot<N>::start_services()
                             robot->log_header();
                         if (requests & Logger::REQUEST_CALIBRATION)
                             robot->request_calibration();
-                        if (requests & Logger::REQUEST_GAINS_SET)
+                        // Comandos con argumentos: ganancias del PID (p) y velocidades (b).
+                        // Responde con los valores en uso (pid,<kp>,<ki>,<kd> o
+                        // speeds,<base>,<giro>,<minima>), o con pid,error / speeds,error.
+                        const bool for_speeds = robot->logger.values_command() == Logger::SPEEDS_COMMAND;
+                        bool values_rejected = requests & Logger::REQUEST_VALUES_INVALID;
+                        if (requests & Logger::REQUEST_VALUES_SET)
                         {
-                            const float *gains = robot->logger.gain_values();
-                            if (!robot->set_gains(gains[0], gains[1], gains[2]))
-                                robot->logger.println("pid,error");
+                            const float *values = robot->logger.values();
+                            const bool accepted = for_speeds
+                                                      ? robot->set_speeds(lround(values[0]), lround(values[1]), lround(values[2]))
+                                                      : robot->set_gains(values[0], values[1], values[2]);
+                            values_rejected = values_rejected || !accepted;
                         }
-                        if (requests & Logger::REQUEST_GAINS_INVALID)
-                            robot->logger.println("pid,error");
-                        // Formato CSV: pid,<kp>,<ki>,<kd> con las ganancias en uso, o pid,error
-                        if (requests & (Logger::REQUEST_GAINS_SET | Logger::REQUEST_GAINS_QUERY))
-                            robot->log_gains();
+                        if (values_rejected)
+                            robot->logger.println(for_speeds ? "speeds,error" : "pid,error");
+                        if (requests & (Logger::REQUEST_VALUES_SET | Logger::REQUEST_VALUES_QUERY))
+                        {
+                            if (for_speeds)
+                                robot->log_speeds();
+                            else
+                                robot->log_gains();
+                        }
+
+                        // Formato CSV: tank,on o tank,off
+                        if (requests & Logger::REQUEST_TANK)
+                            robot->logger.println(robot->toggle_tank_turn() ? "tank,on" : "tank,off");
 
                         // Antes que REQUEST_RUN: "xg" detiene el recorrido y empieza otro.
                         if (requests & Logger::REQUEST_HALT)

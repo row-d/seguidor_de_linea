@@ -26,15 +26,16 @@ struct SensorThresholds
     int thresholds[N];
 };
 
-// Detiene los motores y mide durante 10 segundos: hay que pasar a mano los sensores
-// sobre el fondo y sobre la linea. La ejecuta la tarea "Calibration" (telemetry.h).
-// No escribe en el puerto serie: deja el resultado en calibration_minimums y
-// calibration_maximums, y la tarea de telemetria lo envia al ver CALIBRATION_DONE.
+// Calibracion manual: detiene los motores y mide durante 10 segundos. Hay que pasar a
+// mano los sensores sobre el fondo y sobre la linea. (El robot no tiene fuerza para
+// girar sobre su eje en el piso, asi que no puede barrer la linea por su cuenta.)
+// La ejecuta la tarea "Calibration" (telemetry.h). No escribe en el puerto serie: deja
+// el resultado en calibration_minimums y calibration_maximums, y la tarea de
+// telemetria lo envia al ver CALIBRATION_DONE.
 template <size_t N>
 void Robot<N>::run_calibration()
 {
     const unsigned long calibration_duration_ms = 10000;
-    const int sample_period_ms = 25;
     int *const minimums = calibration_minimums;
     int *const maximums = calibration_maximums;
     SensorCalibration<N> calibration;
@@ -57,7 +58,8 @@ void Robot<N>::run_calibration()
             maximums[index] = max(maximums[index], reading);
         }
 
-        vTaskDelay(pdMS_TO_TICKS(sample_period_ms));
+        // Un tick (unos 16 ms), para no perder la linea si se pasa rapido sobre ella.
+        vTaskDelay(1);
     }
 
     calibration.magic = SENSOR_CALIBRATION_MAGIC;

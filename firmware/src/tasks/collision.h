@@ -30,7 +30,7 @@ void Robot<N>::remove_object()
     claw.close();
     wait_ms(claw_move_ms);
 
-    movement.rotate_right(TURN_SPEED);
+    movement.rotate_right(speed_settings.turn);
     wait_ms(object_turn_ms);
     movement.stop();
 
@@ -39,7 +39,7 @@ void Robot<N>::remove_object()
     buzzer.beep(200);
     logger.event("object_removed");
 
-    movement.rotate_left(TURN_SPEED);
+    movement.rotate_left(speed_settings.turn);
     wait_ms(object_turn_ms);
     movement.stop();
 }

@@ -19,19 +19,25 @@ public:
     static const char CALIBRATE_COMMAND = 'c';
     static const char RUN_COMMAND = 'g';
     static const char HALT_COMMAND = 'x';
-    // Unico comando con argumentos: "p<kp>,<ki>,<kd>" y fin de linea cambia las
-    // ganancias del PID; "p" y fin de linea las consulta.
+    static const char TANK_COMMAND = 't';
+    // Comandos con argumentos: la letra, 3 numeros separados por comas y fin de linea
+    // cambian los valores; la letra sola y fin de linea los consulta.
+    //   "p<kp>,<ki>,<kd>": ganancias del PID.
+    //   "b<base>,<giro>,<minima>": velocidades.
     static const char GAINS_COMMAND = 'p';
+    static const char SPEEDS_COMMAND = 'b';
 
     // Lo que debe hacer quien llama a poll_commands(). Se pueden combinar.
     static const uint8_t REQUEST_HEADER = 1;
     static const uint8_t REQUEST_CALIBRATION = 2;
     static const uint8_t REQUEST_RUN = 4;
     static const uint8_t REQUEST_HALT = 8;
-    // Con REQUEST_GAINS_SET, los valores estan en gain_values().
-    static const uint8_t REQUEST_GAINS_SET = 16;
-    static const uint8_t REQUEST_GAINS_QUERY = 32;
-    static const uint8_t REQUEST_GAINS_INVALID = 64;
+    static const uint8_t REQUEST_TANK = 128;
+    // Comando con argumentos: values_command() dice cual. Con REQUEST_VALUES_SET, los
+    // numeros recibidos estan en values().
+    static const uint8_t REQUEST_VALUES_SET = 16;
+    static const uint8_t REQUEST_VALUES_QUERY = 32;
+    static const uint8_t REQUEST_VALUES_INVALID = 64;
 
 private:
     struct LogEvent
@@ -52,32 +58,33 @@ private:
     // La escribe la tarea de telemetria y la leen las demas.
     volatile bool recording = false;
 
-    // Argumentos del comando GAINS_COMMAND que se esta recibiendo.
+    // Comando con argumentos que se esta recibiendo, o el ultimo recibido.
+    char argument_command = GAINS_COMMAND;
     char arguments[32];
     uint8_t argument_length = 0;
     bool reading_arguments = false;
     unsigned long arguments_started_at = 0;
-    float gains[3] = {0, 0, 0};
+    float received_values[3] = {0, 0, 0};
 
     // Convierte los argumentos recibidos ("0.25,0,0.005", con comas o espacios).
-    uint8_t parse_gains()
+    uint8_t parse_values()
     {
         arguments[argument_length] = '\0';
         if (argument_length == 0)
-            return REQUEST_GAINS_QUERY;
+            return REQUEST_VALUES_QUERY;
 
         char *cursor = arguments;
-        for (float &gain : gains)
+        for (float &value : received_values)
         {
             char *end = cursor;
-            gain = strtod(cursor, &end);
+            value = strtod(cursor, &end);
             if (end == cursor)
-                return REQUEST_GAINS_INVALID;
+                return REQUEST_VALUES_INVALID;
             cursor = end;
             while (*cursor == ',' || *cursor == ' ')
                 ++cursor;
         }
-        return *cursor == '\0' ? REQUEST_GAINS_SET : REQUEST_GAINS_INVALID;
+        return *cursor == '\0' ? REQUEST_VALUES_SET : REQUEST_VALUES_INVALID;
     }
 
 public:
@@ -113,24 +120,30 @@ public:
         return recording;
     }
 
-    // Kp, Ki y Kd del ultimo REQUEST_GAINS_SET.
-    const float *gain_values() const
+    // Comando al que se refieren REQUEST_VALUES_*: GAINS_COMMAND o SPEEDS_COMMAND.
+    char values_command() const
     {
-        return gains;
+        return argument_command;
+    }
+
+    // Los 3 numeros del ultimo REQUEST_VALUES_SET.
+    const float *values() const
+    {
+        return received_values;
     }
 
     // Lee los comandos pendientes del PC. Devuelve REQUEST_HEADER si acaba de empezar
     // un registro, para que quien llama envie la cabecera, REQUEST_CALIBRATION si
     // el PC pidio calibrar los sensores, REQUEST_RUN si pidio empezar el recorrido y
-    // REQUEST_HALT si pidio detenerlo. Para las ganancias del PID devuelve
-    // REQUEST_GAINS_SET, REQUEST_GAINS_QUERY o REQUEST_GAINS_INVALID.
+    // REQUEST_HALT si pidio detenerlo. Para los comandos con argumentos
+    // devuelve REQUEST_VALUES_SET, REQUEST_VALUES_QUERY o REQUEST_VALUES_INVALID.
     uint8_t poll_commands()
     {
         uint8_t requests = 0;
         if (reading_arguments && millis() - arguments_started_at > ARGUMENT_TIMEOUT_MS)
         {
             reading_arguments = false;
-            requests |= REQUEST_GAINS_INVALID;
+            requests |= REQUEST_VALUES_INVALID;
         }
 
         while (port.available() > 0)
@@ -141,7 +154,7 @@ public:
                 if (command == '\n' || command == '\r')
                 {
                     reading_arguments = false;
-                    requests |= parse_gains();
+                    requests |= parse_values();
                 }
                 else if (argument_length < sizeof(arguments) - 1)
                 {
@@ -151,13 +164,14 @@ public:
                 {
                     // Linea demasiado larga.
                     reading_arguments = false;
-                    requests |= REQUEST_GAINS_INVALID;
+                    requests |= REQUEST_VALUES_INVALID;
                 }
                 continue;
             }
 
-            if (command == GAINS_COMMAND)
+            if (command == GAINS_COMMAND || command == SPEEDS_COMMAND)
             {
+                argument_command = command;
                 reading_arguments = true;
                 argument_length = 0;
                 arguments_started_at = millis();
@@ -173,6 +187,10 @@ public:
             else if (command == HALT_COMMAND)
             {
                 requests |= REQUEST_HALT;
+            }
+            else if (command == TANK_COMMAND)
+            {
+                requests |= REQUEST_TANK;
             }
             else if (command == START_COMMAND)
             {
