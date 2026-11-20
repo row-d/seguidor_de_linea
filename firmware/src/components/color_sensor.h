@@ -9,11 +9,18 @@ struct RgbColor
     uint16_t green;
     uint16_t blue;
 
-    inline bool close_to(const RgbColor &other, uint16_t tolerance) const
+    bool close_to(const RgbColor &other, uint16_t tolerance) const
     {
-        return (abs(static_cast<int>(red) - static_cast<int>(other.red)) <= tolerance) &&
-               (abs(static_cast<int>(green) - static_cast<int>(other.green)) <= tolerance) &&
-               (abs(static_cast<int>(blue) - static_cast<int>(other.blue)) <= tolerance);
+        return near(red, other.red, tolerance) &&
+               near(green, other.green, tolerance) &&
+               near(blue, other.blue, tolerance);
+    }
+
+private:
+    // Sin restar con signo: en AVR int es de 16 bits y no cabe un uint16_t.
+    static bool near(uint16_t value, uint16_t expected, uint16_t tolerance)
+    {
+        return (value > expected ? value - expected : expected - value) <= tolerance;
     }
 };
 
@@ -28,36 +35,22 @@ private:
     uint16_t tolerance;
 
 public:
-    ColorSensor(Reader color_reader,
-                RgbColor target_color,
-                uint16_t color_tolerance)
+    ColorSensor(Reader color_reader, RgbColor target_color, uint16_t color_tolerance)
         : reader(color_reader), target(target_color), tolerance(color_tolerance) {}
 
-    void setup() {}
+    void setup() override {}
 
     RgbColor read()
     {
         RgbColor color{0, 0, 0};
         if (reader != nullptr)
-        {
             reader(color);
-        }
         return color;
     }
 
     bool object_detected()
     {
-        const RgbColor color = read();
-        return within_tolerance(color.red, target.red) &&
-               within_tolerance(color.green, target.green) &&
-               within_tolerance(color.blue, target.blue);
-    }
-
-private:
-    bool within_tolerance(uint16_t value, uint16_t expected) const
-    {
-        const uint16_t difference = value > expected ? value - expected : expected - value;
-        return difference <= tolerance;
+        return read().close_to(target, tolerance);
     }
 };
 

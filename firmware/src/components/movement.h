@@ -5,137 +5,89 @@
 
 class Movement : public Component
 {
-private:
-    pin enable_l;
-    pin direction_l;
-    pin enable_r;
-    pin direction_r;
-    int max_speed = 255;
-    // PWM minimo con el que una rueda gira de verdad. Por debajo el motor zumba pero
-    // no se mueve, y en una curva la rueda interior frena al robot.
-    int min_speed = 80;
+public:
+    static const int MAX_SPEED = 255;
 
-    // Una velocidad pequena se lleva a 0 en vez de subirla al minimo: asi la rueda
-    // interior puede detenerse del todo y el robot pivotea en las curvas cerradas.
-    int effective_speed(int speed)
+private:
+    // Cada rueda: pines del driver y compensacion de drive_compensated().
+    struct Wheel
     {
-        const int magnitude = abs(speed);
-        if (magnitude < min_speed / 2)
-            return 0;
-        return magnitude < min_speed ? min_speed : magnitude;
-    }
+        pin enable;
+        pin direction;
+        uint8_t forward; // nivel de direction para avanzar
+        int min_pwm;
+        float trim;
+
+        void setup()
+        {
+            pinMode(enable, OUTPUT);
+            pinMode(direction, OUTPUT);
+        }
+
+        void drive(int pwm)
+        {
+            digitalWrite(direction, pwm >= 0 ? forward : !forward);
+            analogWrite(enable, abs(pwm));
+        }
+
+        // Salta la zona muerta del motor: cualquier velocidad distinta de 0 da al menos
+        // min_pwm, asi la rueda interior de una curva no se queda parada con un PWM que no
+        // la mueve. trim escala la parte por encima del minimo.
+        int to_pwm(int speed) const
+        {
+            speed = constrain(speed, -MAX_SPEED, MAX_SPEED);
+            if (speed == 0)
+                return 0;
+            const long above_min = (long)(abs(speed) - 1) * (MAX_SPEED - min_pwm) / (MAX_SPEED - 1);
+            const int magnitude = min(min_pwm + (int)(above_min * trim), MAX_SPEED);
+            return speed > 0 ? magnitude : -magnitude;
+        }
+    };
+
+    Wheel left;
+    Wheel right;
 
 public:
-    Movement(pin _enable_l, pin _direction_l,
-             pin _enable_r, pin _direction_r)
-        : enable_l(_enable_l), direction_l(_direction_l),
-          enable_r(_enable_r), direction_r(_direction_r)
+    Movement(pin enable_l, pin direction_l, pin enable_r, pin direction_r)
+        : left{enable_l, direction_l, LOW, 0, 1.0f},
+          right{enable_r, direction_r, HIGH, 0, 1.0f} {}
+
+    void setup() override
     {
+        left.setup();
+        right.setup();
+        drive(0, 0);
     }
 
-    void setup();
-    // PWM minimo con el que una rueda gira de verdad (0..255).
-    void set_min_speed(int speed)
+    // PWM con signo de cada rueda, -255..255: negativo va hacia atras.
+    void drive(int pwm_l, int pwm_r)
     {
-        min_speed = speed;
+        left.drive(pwm_l);
+        right.drive(pwm_r);
     }
-    void update_speed(int speed_l, int speed_r);
-    void update_speed(int speed);
-    void move_forward(int speed);
-    void move_forward(int speed_l, int speed_r);
-    void drive(int speed_l, int speed_r);
-    void move_backward(int speed);
-    void move_left(int speed, int direction = HIGH);
-    void move_right(int speed, int direction = HIGH);
-    void rotate_left(int speed);
-    void rotate_right(int speed);
-    void stop();
+
+    // Deja de mover las ruedas sin cambiar su sentido de giro.
+    void stop()
+    {
+        analogWrite(left.enable, 0);
+        analogWrite(right.enable, 0);
+    }
+
+    // min_pwm: PWM minimo con el que arranca cada rueda. trim (<= 1): escala el PWM por
+    // encima del minimo para que las dos ruedas corran igual con la misma velocidad.
+    void set_compensation(int min_pwm_l, float trim_l, int min_pwm_r, float trim_r)
+    {
+        left.min_pwm = min_pwm_l;
+        left.trim = trim_l;
+        right.min_pwm = min_pwm_r;
+        right.trim = trim_r;
+    }
+
+    // Como drive(), pero con velocidades -255..255 compensadas con set_compensation().
+    void drive_compensated(int speed_l, int speed_r)
+    {
+        drive(left.to_pwm(speed_l), right.to_pwm(speed_r));
+    }
 };
-
-void Movement::setup()
-{
-    pinMode(enable_l, OUTPUT);
-    pinMode(direction_l, OUTPUT);
-    pinMode(enable_r, OUTPUT);
-    pinMode(direction_r, OUTPUT);
-
-    digitalWrite(direction_l, LOW);
-    digitalWrite(direction_r, HIGH);
-    stop();
-}
-
-void Movement::update_speed(int speed_l, int speed_r)
-{
-    analogWrite(enable_l, constrain(speed_l, 0, this->max_speed));
-    analogWrite(enable_r, constrain(speed_r, 0, this->max_speed));
-}
-
-void Movement::update_speed(int speed)
-{
-    update_speed(speed, speed);
-}
-
-void Movement::move_forward(int speed)
-{
-    digitalWrite(direction_l, LOW);
-    digitalWrite(direction_r, HIGH);
-    update_speed(speed, speed);
-}
-
-void Movement::move_forward(int speed_l, int speed_r)
-{
-    digitalWrite(direction_l, LOW);
-    digitalWrite(direction_r, HIGH);
-    update_speed(speed_l, speed_r);
-}
-
-// Velocidades con signo: un valor negativo hace girar ese lado hacia atras.
-void Movement::drive(int speed_l, int speed_r)
-{
-    digitalWrite(direction_l, speed_l >= 0 ? LOW : HIGH);
-    digitalWrite(direction_r, speed_r >= 0 ? HIGH : LOW);
-    update_speed(effective_speed(speed_l), effective_speed(speed_r));
-}
-
-void Movement::move_backward(int speed)
-{
-    digitalWrite(direction_l, HIGH);
-    digitalWrite(direction_r, LOW);
-    update_speed(speed, speed);
-}
-
-void Movement::move_left(int speed, int direction = HIGH)
-{
-
-    digitalWrite(direction_l, direction == HIGH ? LOW : HIGH);
-    digitalWrite(direction_r, direction == HIGH ? HIGH : LOW);
-    update_speed(speed, 0);
-}
-
-void Movement::move_right(int speed, int direction = HIGH)
-{
-    digitalWrite(direction_l, direction == HIGH ? LOW : HIGH);
-    digitalWrite(direction_r, direction == HIGH ? HIGH : LOW);
-    update_speed(0, speed);
-}
-
-void Movement::rotate_left(int speed)
-{
-    digitalWrite(direction_l, HIGH);
-    digitalWrite(direction_r, HIGH);
-    update_speed(speed, speed);
-}
-
-void Movement::rotate_right(int speed)
-{
-    digitalWrite(direction_l, LOW);
-    digitalWrite(direction_r, LOW);
-    update_speed(speed, speed);
-}
-
-void Movement::stop()
-{
-    update_speed(0);
-}
 
 #endif // MOVEMENT_H

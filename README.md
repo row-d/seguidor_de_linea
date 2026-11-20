@@ -1,54 +1,53 @@
 # Seguidor de linea
 
-Software para un robot movil que sigue una linea, detecta obstaculos y puede recoger/soltar objetos con una garra.
+Software para un robot movil que sigue una linea, resuelve bifurcaciones, se detiene en la meta y acciona una garra al detectar un objeto.
 
 El sketch principal ensambla los componentes del robot. La implementacion reutilizable esta en la biblioteca local `RobotComponents`, dentro de `firmware/`.
 
 ## Estado actual
 
-- El robot empieza el recorrido al encender. La calibracion, el registro de telemetria y un recorrido nuevo se piden desde el PC por Bluetooth (ver "Comandos desde el PC").
-- El seguimiento de linea usa un controlador PID sencillo.
-- La tarea de calibracion calcula umbrales, los guarda en EEPROM y envia el resultado por Bluetooth usando `Serial1`.
-- La deteccion de obstaculos se hace con un sensor ultrasonico a menos de 15 cm.
-- Ante un obstaculo, el robot abre la garra, avanza, cierra la garra, gira, suelta el objeto a un lado y vuelve a la linea.
-- La telemetria se envia por Bluetooth o USB con la clase `Logger`.
-- `read_rgb_sensor()` es un stub: actualmente siempre devuelve `{0, 0, 0}`. Hay que conectarlo al sensor RGB real antes de usar `ColorSensor`.
+- El robot empieza el recorrido al encender y se detiene sobre la linea de meta con dos beeps.
+- El seguimiento de linea usa un PID (`PID_v1`) sobre 3 sensores infrarrojos. En las bifurcaciones prefiere la derecha, despues recto y por ultimo la izquierda.
+- Una tarea aparte mide la distancia con el ultrasonico y, con un objeto a 7 cm o menos en 3 lecturas seguidas, abre y cierra la garra. El robot no se detiene y no emite un beep al derribar el objeto.
+- Los LEDs indican hacia donde gira el robot; yendo recto se encienden los dos.
+- Los umbrales de los sensores y la compensacion de las ruedas se obtienen con calibraciones que imprimen los valores, y se copian en `seguidor_de_linea.ino`. No se usa la EEPROM.
+- Los comandos desde el PC (consola `scripts/console.ps1`) estan desactivados por defecto (`COMMANDS` en 0).
+- `read_rgb_sensor()` no existe en el sketch actual y `ColorSensor` no se usa.
 - No hay una suite automatizada de pruebas; la validacion principal se hace compilando y probando el robot en hardware.
 
 ## Estructura
 
 ```text
-seguidor_de_linea.ino       Sketch principal y configuracion del robot
-bluetooth_config.h          Nombre y velocidad del modulo HC-05
+seguidor_de_linea.ino       Sketch principal: pines, valores de calibracion, modos y tareas
+bluetooth_config.h          Nombre y velocidad del modulo HC-05, y puerto de los comandos
 firmware/
   library.properties        Metadatos y dependencias de la biblioteca
   src/
     RobotComponents.h       Cabecera publica de la biblioteca
     components/             Componentes reutilizables del robot
-      movement.h            Motores y direccion
-      line_sensors.h        Sensores de linea y calculo del error
-      color_sensor.h        Lectura y comparacion de color
-      claw.h                Garra controlada por servo
-      buzzer.h               Zumbador
-      led_array.h            LEDs de giro
-      ultrasonic_sensor.h    Medicion de distancia
-      logger.h               Registro y telemetria por Serial o Bluetooth
-      hc05.h                 Configuracion del HC-05 con comandos AT
-      component.h            Interfaz comun de componentes
-    tasks/                  Tareas y control del robot
-      robot.h               Declaracion del controlador
-      start.h               Tarea de control: meta, bifurcaciones y callejones
-      line_follower.h       Seguimiento de linea: PID, serpenteo y busqueda
-      route_memory.h        Ramas visitadas de cada bifurcacion
-      collision.h           Retiro de objetos
-      calibration.h         Calibracion de sensores
-      pid_gains.h           Ganancias del PID: EEPROM y cambios desde el PC
-      speed_settings.h      Velocidades: EEPROM y cambios desde el PC
-      telemetry.h           Tareas de telemetria/comandos y de calibracion
+      movement.h            Motores, direccion y compensacion de cada rueda
+      line_sensors.h        Sensores de linea, umbrales y calculo del error
+      color_sensor.h        Lectura y comparacion de color (sin uso)
+      claw.h                Garra controlada por servo, en pasos
+      buzzer.h              Zumbador
+      led_array.h           LEDs de giro
+      ultrasonic_sensor.h   Medicion de distancia
+      wheel_sensor.h        Encoders DFRobot SEN0038 de las ruedas (flancos, rpm, distancia)
+      logger.h              Mensajes y registro por Serial o Bluetooth
+      hc05.h                Configuracion del HC-05 con comandos AT
+      component.h           Interfaz comun de componentes
+    behaviors/              Comportamientos del robot (cada uno con su tarea de FreeRTOS)
+      line_follower.h       Seguimiento de linea: PID, salida, cruces, meta, bifurcaciones y linea perdida
+      collision.h           Garra al detectar un objeto con el ultrasonico
+      calibration.h         Calibracion de los sensores de linea y de las ruedas
+    commands/
+      commands.h            Lectura de los comandos del PC (letras de scripts/console.ps1)
+      command_task.h        Tarea que aplica los comandos (con COMMANDS en 1)
 scripts/
   console.ps1               Consola: muestra lo que envia el robot y le manda comandos
   link-library.ps1          Enlace simbolico para Windows
   link-library.sh           Enlace simbolico para Linux/macOS
+logs/                       Registros CSV guardados por la consola
 ```
 
 ## Requisitos
@@ -60,13 +59,13 @@ scripts/
   - `Arduino_FreeRTOS`
   - `PID` (`PID_v1`)
 - Git, para colaborar con el proyecto.
-- En Windows, permisos para crear enlaces simbolicos. Si el script falla, ejecuta VS Code o PowerShell con los permisos necesarios o crea el enlace desde una terminal con permisos adecuados.
+- En Windows, permisos para crear enlaces simbolicos si se usa el script de enlace. Si el script falla, ejecuta VS Code o PowerShell con los permisos necesarios o crea el enlace desde una terminal con permisos adecuados.
 
 El esquema usa una Arduino Mega. No cambies los pines sin comprobar primero el cableado real.
 
 ## Preparar el entorno
 
-Desde la raiz del repositorio:
+Con Arduino CLI no hace falta enlazar la biblioteca: `--library firmware` compila la copia local (ver "Compilar y cargar"). Con el Arduino IDE, enlaza `firmware/` una vez desde la raiz del repositorio:
 
 ### Windows PowerShell
 
@@ -103,28 +102,128 @@ Estos valores estan definidos en `seguidor_de_linea.ino`:
 | L298N MDV, lado izquierdo | `E1=2` (PWM), `M1=3` (sentido); conecta aqui las dos ruedas izquierdas en paralelo |
 | L298N MDV, lado derecho | `E2=4` (PWM), `M2=5` (sentido); conecta aqui las dos ruedas derechas en paralelo |
 | Zumbador | `10` |
-| Garra / servo | `8`, abierta a `20` grados, cerrada a `90` grados |
-| Sensores de linea | Analogicos `A0`, `A1`, `A2` |
-| LEDs de giro | `11`, `12` |
+| Garra / servo | `9`, abierta a `90` grados, cerrada a `0` grados, en pasos de `5` grados cada `15` ms |
+| Sensores de linea | Analogicos `A0` (izquierdo), `A1` (central), `A2` (derecho) |
+| LEDs de giro | `11` (LED 0, izquierdo), `12` (LED 1, derecho) |
 | Ultrasonico | Trigger `7`, echo `6` |
-| Sensor RGB | Pendiente de conectar en `read_rgb_sensor()` |
 | Bluetooth | `Serial1` de la Mega: RX1 `19`, TX1 `18`, 9600 baudios |
+| Encoders de las ruedas (DFRobot SEN0038, 20 PPR) | Izquierda `20`, derecha `21` (con `attachInterrupt`, necesitan pines de interrupcion; ocupan el I2C de la Mega). Rueda de 65 mm |
 
 Comprueba que los pines PWM y los niveles de direccion coincidan con el driver de motores usado por el hardware.
 
 ## Compilar y cargar
 
-1. Abre `seguidor_de_linea.ino` en Arduino IDE.
-2. Selecciona la placa y el puerto correctos.
+Con Arduino CLI, desde la raiz del repositorio:
+
+```bash
+arduino-cli compile --fqbn arduino:avr:mega --library firmware .
+arduino-cli upload -p <puerto> --fqbn arduino:avr:mega .
+```
+
+Sustituye `<puerto>` por el COM del USB de la Mega (`arduino-cli board list`).
+
+Con el Arduino IDE:
+
+1. Abre `seguidor_de_linea.ino`.
+2. Selecciona la placa Arduino Mega y el puerto correcto.
 3. Instala las dependencias indicadas si el IDE las solicita.
 4. Ejecuta **Verify/Compile**.
 5. Conecta el robot y ejecuta **Upload**.
 
-Al encender, el robot empieza el recorrido sin esperar al PC: colocalo antes en la zona de inicio.
+Al encender, el robot empieza el recorrido sin esperar al PC: colocalo antes sobre la linea de salida.
+
+## Modos del sketch
+
+Al principio de `seguidor_de_linea.ino` hay tres constantes que eligen que hace el robot al encender:
+
+| Constante | En 1 | En 0 (por defecto) |
+| --- | --- | --- |
+| `CALIBRATE_WHEELS` | Solo calibra las ruedas (ver "Calibrar las ruedas"). Tiene prioridad sobre `CALIBRATE`. | |
+| `CALIBRATE` | Solo calibra los sensores de linea (ver "Calibrar los sensores de linea"). | |
+| `COMMANDS` | Ademas del recorrido, crea la tarea que atiende los comandos del PC. Sin efecto con una calibracion. | El robot no lee comandos. |
+
+Con las dos calibraciones en 0, el robot hace el recorrido. Despues de calibrar, vuelve a poner la constante en 0 y carga de nuevo el sketch.
+
+## Calibraciones
+
+Las calibraciones imprimen por el puerto del `Logger` los valores que hay que copiar en `seguidor_de_linea.ino`. No se guardan en EEPROM.
+
+### Calibrar los sensores de linea
+
+Deja el robot sobre la linea. Con `#define CALIBRATE 1`, al encender gira sobre su eje a la derecha durante 4 segundos (velocidad `110`) midiendo la lectura minima (fondo) y maxima (linea) de cada sensor, e imprime cada 500 ms y al final:
+
+```text
+sensor 0: min=... max=... threshold=...
+```
+
+Cada umbral es el minimo mas un tercio del rango. Un sensor que casi no cambio (rango de 100 o menos) conserva su umbral. Copia los `threshold` en `thresholds[3]`, en el orden izquierdo, central y derecho. Un sensor ve la linea cuando su lectura es mayor o igual que su umbral.
+
+Con `COMMANDS` en 1 tambien se puede calibrar con el comando `c` (ver "Comandos desde el PC"); los umbrales se aplican al momento pero se pierden al apagar.
+
+### Calibrar las ruedas
+
+Cada motor necesita un PWM minimo distinto para arrancar y, por encima de ese minimo, uno corre mas que el otro. La calibracion lo mide con los encoders:
+
+1. Levanta el robot para que las ruedas giren en el aire.
+2. Pon `#define CALIBRATE_WHEELS 1` y carga el sketch.
+3. El robot sube el PWM de las dos ruedas desde `30` hasta `255`, de 5 en 5 cada 500 ms, e imprime `pwm`, `rpm_l` y `rpm_r`.
+4. El primer PWM con el que el encoder ve giro es el minimo de esa rueda. Con las rpm por punto de PWM por encima del minimo calcula cuanto corre cada rueda, y escala la mas rapida para igualar a la lenta.
+5. Copia los valores que imprime en `MIN_PWM_L`, `MIN_PWM_R`, `WHEEL_TRIM_L` y `WHEEL_TRIM_R`, y vuelve a poner `CALIBRATE_WHEELS` en 0.
+
+Si una rueda no gira o su encoder no se lee, imprime un aviso y no calcula valores.
+
+`Movement::drive_compensated()` aplica esos valores: cualquier velocidad distinta de 0 da al menos el PWM minimo de la rueda, y la parte por encima del minimo se escala con `WHEEL_TRIM`. El seguidor de linea siempre mueve los motores asi.
+
+## Como funciona
+
+`setup()` llama a `setup()` de cada componente, configura la compensacion de las ruedas y crea las tareas de `Arduino_FreeRTOS`. `loop()` queda vacio porque la logica corre en tareas:
+
+| Tarea | Archivo | Prioridad | Que hace |
+| --- | --- | --- | --- |
+| `follow_line` | `behaviors/line_follower.h` | 2 | Sigue la linea cada 15 ms con periodo fijo (`xTaskDelayUntil`), para que el PID calcule siempre con el mismo intervalo. Se borra al llegar a la meta. |
+| `collision` | `behaviors/collision.h` | 1 | Mide la distancia cada 65 ms y acciona la garra ante un objeto. |
+| `commands` | `commands/command_task.h` | 1 | Solo con `COMMANDS` en 1: lee los comandos del PC cada 90 ms. Tiene menos prioridad que `follow_line` para poder detenerlo entre dos vueltas. |
+| `calibrate` / `calibrate_wheels` | `behaviors/calibration.h` | 1 | Solo con `CALIBRATE` o `CALIBRATE_WHEELS` en 1, en lugar de las demas. |
+
+Cada comportamiento esta en un `namespace` con sus constantes, su estado y un struct `Components` con referencias a los componentes que usa; el sketch se lo pasa a `xTaskCreate`.
+
+### Seguimiento de linea
+
+En cada vuelta, `line_follower::step()` lee los 3 sensores (valor y si supera su umbral) y recorre una lista de fases (`PHASES`) en orden. La primera que mueve el robot decide la vuelta:
+
+1. `ignore_other_branch`: durante `FORK_COMMIT_MS` (400 ms) despues de tomar la rama derecha, el sensor izquierdo no cuenta.
+2. `leave_start`: mientras sigue sobre la linea de salida avanza recto a `START_SPEED` (130) y no busca la meta.
+3. `search_side` y `undo_search`: busqueda de la rama derecha y vuelta atras si no la encuentra (ver "Bifurcaciones").
+4. `forget_search`: con el sensor central sobre la linea se puede volver a buscar la rama derecha.
+5. `track_all_black`: los 3 sensores en negro durante `FINISH_MS` (600 ms) seguidos es la meta.
+6. `cross_horizontal`: con los dos laterales en negro cruza recto a `ALL_BLACK_SPEED` (80), sin PID.
+7. `search_before_other_side`: solo el sensor izquierdo ve la linea; antes de girar a la izquierda busca una rama a la derecha.
+8. `follow_line`: sigue la linea con el PID o, si ningun sensor la ve, la recupera.
+
+**PID.** El error es la posicion de la linea ponderada por la lectura de los sensores que la ven: `-2000` bajo el izquierdo, `0` bajo el central y `2000` bajo el derecho; una linea entre dos sensores da un valor intermedio. `PID_v1` (`KP` 0.152, `KI` 0, `KD` 0.001, en modo `REVERSE`, salida limitada a `±255`) da la correccion, que se suma a una rueda y se resta a la otra. Hasta un error de `SLOWDOWN_FROM_ERROR` (1000) la velocidad base es `speeds.base`; por encima baja hasta `speeds.curve`, asi que en las curvas cerradas gira casi sobre su eje. La rueda interior no baja de `speeds.inner_min`: en 0 se detiene en vez de ir hacia atras, lo que pide menos fuerza a los motores. Las velocidades iniciales son `{92, 0, 0}` y las ganancias estan al principio de `line_follower.h`. `PID_v1` divide `Kd` entre el periodo en segundos, asi que `Kd` debe ser mucho menor que `Kp`.
+
+**Bifurcaciones.** La rama preferida es `FORK_SIDE` (1, derecha). Con `PRIORITIZE_FORK_SIDE`, la prioridad en cualquier desvio es derecha, recto, izquierda: mientras el central ve la linea, el sensor izquierdo no cuenta para el error. Si solo el izquierdo ve la linea, o si la linea se pierde viniendo centrada (el central cae en el hueco de una Y), el robot gira hacia la derecha durante `FORK_FIRST_MS` (350 ms), con la rueda exterior a `FORK_SEARCH_SPEED` (220) y la interior a `speeds.inner_min`. Si el central o el derecho encuentran linea, se queda con esa rama. Si no, deshace el giro con el mismo movimiento marcha atras y sigue hacia la izquierda; no vuelve a buscar hasta que el central vea la linea. Cada curva a la izquierda cuesta unos 700 ms extra.
+
+**Linea perdida.** Si ningun sensor ve la linea:
+
+- Justo despues de una linea horizontal (en `AFTER_BLACK_MS`, 100 ms), revisa si era la meta (ver abajo).
+- Si venia centrada, busca la rama derecha y despues gira a la izquierda como mucho `FORK_SECOND_MS` (500 ms).
+- Si venia hacia un lado, mantiene las ultimas velocidades durante `LOST_GRACE_MS` (250 ms): en una curva la linea suele aparecer enseguida.
+- Si sigue sin aparecer, retrocede a `RECOVER_SPEED` (120) girando hacia el ultimo lado donde la vio (`RECOVER_TURN`).
+
+**Salida, cruces y meta.** Se ven igual (los laterales en negro un momento); cambia lo que hay despues. El robot cruza toda linea horizontal recto a `ALL_BLACK_SPEED`. Si al salir del negro la linea no aparece en `FINISH_CHECK_MS` (100 ms), era la meta: retrocede hasta que al menos 2 sensores vean la linea (como mucho 1 s) y se para encima. Como respaldo, 3 sensores en negro durante `FINISH_MS` tambien es la meta. Se perdonan `ALL_BLACK_TOLERANCE_MS` (40 ms) de lecturas fallidas, por ejemplo en las uniones de la cinta. Al llegar imprime `meta`, detiene los motores, emite dos beeps de 800 ms y borra la tarea.
+
+**LEDs.** Cada vez que el seguidor cambia la velocidad de los motores, `LedArray::show_turn()` enciende el LED del lado hacia el que gira (el de la rueda mas lenta), o los dos si la diferencia entre ruedas no pasa de `STRAIGHT_DEADBAND` (30).
+
+### Objetos y garra
+
+`collision::task` mide la distancia con un alcance de 14 cm cada 65 ms (60 ms o mas entre disparos, para que el eco anterior no se lea como nuevo). Con un objeto a `DISTANCE_CM` (7) o menos en `CONFIRMATIONS` (3) lecturas seguidas imprime `collision`, abre la garra y la vuelve a cerrar. Corre en paralelo con el seguimiento: el robot no se detiene. La medicion suspende el planificador y usa `pulseInLong`, porque las interrupciones del servo, del puerto serie y del tick acortaban el eco medido con `pulseIn`; sin eco dentro del alcance devuelve 999.
 
 ## Comandos desde el PC
 
-Cada comando es una letra que se envia por el puerto COM del modulo Bluetooth, a `9600` baudios. La consola los envia con una tecla y muestra todo lo que responde el robot:
+Los comandos estan desactivados por defecto. Para usarlos, pon `#define COMMANDS 1` en `seguidor_de_linea.ino` y vuelve a cargar el sketch: se crea la tarea `commands`, que lee los comandos cada 90 ms. No tiene efecto con `CALIBRATE` o `CALIBRATE_WHEELS`.
+
+Van por el puerto que elige `COMMANDS_OVER_USB` en `bluetooth_config.h` (ver "Puerto serie y registro"), a `BLUETOOTH_BAUD` (`9600`). La consola los envia con una tecla y muestra todo lo que responde el robot:
 
 ```powershell
 .\scripts\console.ps1
@@ -134,129 +233,73 @@ Usa `COM3` por defecto; con `-Port COM5` eliges otro puerto. Reintenta la conexi
 
 | Tecla | Que hace | Respuesta del robot |
 | --- | --- | --- |
-| `g` | Empieza otro recorrido cuando el anterior ya termino. | `run,ms,start`, o `run,ms,ignored` si ya hay un recorrido en marcha o esta calibrando |
-| `x` | Detiene el recorrido en marcha y para los motores. | `run,ms,stop` |
-| `c` | Calibra los sensores de linea. | `calibration,start`, la tabla de resultados y `calibration,complete` |
+| `g` | Empieza otro recorrido desde la linea de salida. | `run,ms,start`, o `run,ms,ignored` si ya hay uno en marcha |
+| `x` | Detiene el recorrido en marcha y para los motores. | `run,ms,stop`, o `run,ms,ignored` si no habia ninguno |
+| `c` | Calibra los sensores de linea. | `calibration,start`, las lecturas de cada sensor y `calibration,complete`, o `calibration,ignored` con un recorrido en marcha |
 | `p` | Pide `Kp Ki Kd` por teclado y los cambia; con Enter vacio solo los consulta. | `pid,kp,ki,kd` con las ganancias en uso, o `pid,error` |
-| `b` | Pide las velocidades `base giro minima` (0 a 255) y las cambia; con Enter vacio solo las consulta. | `speeds,base,giro,minima` con las velocidades en uso, o `speeds,error` |
-| `t` | Activa o desactiva el giro tipo tanque. | `tank,on` o `tank,off` |
-| `r` | Empieza un registro de telemetria y lo guarda en `logs\run-AAAAMMDD-HHMMSS.csv`. | `recording,ms,start` y la cabecera |
+| `b` | Pide las velocidades `base curva interior` y las cambia; con Enter vacio solo las consulta. | `speeds,base,curva,interior` con las velocidades en uso, o `speeds,error` |
+| `r` | Empieza un registro y lo guarda en `logs\run-AAAAMMDD-HHMMSS.csv`. | `recording,ms,start` y la cabecera |
 | `s` | Detiene el registro y cierra el CSV. | `recording,ms,stop` |
 | `v` | Muestra u oculta las filas de telemetria en pantalla (se guardan igual). | |
 | `h` | Muestra la ayuda. | |
 | `q` | Sale; detiene el registro si habia uno. | |
 
-Las teclas `g`, `x`, `t`, `c`, `r` y `s` se envian tal cual al robot. `b` funciona igual que `p`, con `b<base>,<giro>,<minima>`. `p` envia una linea: `p<kp>,<ki>,<kd>` para cambiar las ganancias o `p` sola para consultarlas. Las demas solo afectan a la consola.
+Las teclas `g`, `x`, `c`, `r` y `s` se envian tal cual al robot. `p` envia una linea: `p<kp>,<ki>,<kd>` para cambiar las ganancias o `p` sola para consultarlas; `b` funciona igual, con `b<base>,<curva>,<interior>`. Si la linea de valores no termina en 2 s, se descarta y el robot responde con el error. Las demas teclas solo afectan a la consola. Las letras estan en `firmware/src/commands/commands.h` y deben coincidir con las de `scripts/console.ps1`.
+
+Las ganancias, las velocidades y los umbrales de una calibracion solo duran hasta que se apaga el robot: no se guardan en EEPROM. Para conservarlos, copia los valores en el codigo (`KP`, `KI`, `KD` y `speeds` en `firmware/src/behaviors/line_follower.h`, `thresholds` en `seguidor_de_linea.ino`).
 
 ### Repetir el recorrido
 
-El primer recorrido empieza solo al encender. Cuando termina (`finish`, `no_route`, `fork_missed` o `memory_full`), el robot se detiene y `g` empieza otro sin reiniciarlo. Coloca antes el robot en la zona de inicio: se mueve en cuanto recibe el comando. Para grabar ese recorrido desde el principio, pulsa `r` y despues `g`.
+El primer recorrido empieza solo al encender. Cuando llega a la meta, el robot se detiene y `g` empieza otro sin reiniciarlo. Coloca antes el robot sobre la linea de salida: se mueve en cuanto recibe el comando.
 
-Para cortar un recorrido a la mitad, pulsa `x`: el robot se detiene de inmediato, incluso en medio de un giro, y queda esperando comandos. Despues, `g` empieza un recorrido nuevo desde cero, sin las bifurcaciones del anterior. Si se pulsa `x` durante una calibracion, la calibracion termina igual pero el robot no retoma el recorrido.
+Para cortar un recorrido a la mitad, pulsa `x`: el robot se detiene y queda esperando comandos. `xg` lo detiene y empieza uno nuevo desde cero.
 
 ### Ajustar las velocidades
 
-Pulsa `b` y escribe tres numeros de 0 a 255 separados por espacios, por ejemplo `150 230 110`:
+Pulsa `b` y escribe tres numeros separados por espacios, por ejemplo `92 0 0`:
 
-- **base:** velocidad de avance sobre la linea.
-- **giro:** velocidad del lado que empuja al buscar la linea y al girar en una bifurcacion.
-- **minima:** PWM minimo con el que una rueda gira de verdad. Una velocidad menor que la mitad de este valor detiene la rueda; entre la mitad y el minimo, se sube al minimo.
+- **base (0 a 255):** velocidad con la linea bajo el sensor central.
+- **curva (0 a 255):** velocidad base con la linea bajo un sensor lateral. Entre las dos se interpola segun el error.
+- **interior (-255 a 255):** velocidad minima de la rueda interior al girar. Negativa, esa rueda va hacia atras.
 
-El robot las aplica en el siguiente ciclo de control, sin detener el recorrido, las guarda en EEPROM y responde `speeds,base,giro,minima`. En cada arranque usa las guardadas; si nunca se guardo ninguna, usa las de `firmware/src/tasks/robot.h` (`130`, `230` y `125`). Con un valor fuera de 0 a 255, o si la linea no tiene 3 numeros, responde `speeds,error` y no cambia nada.
-
-### Giro tipo tanque
-
-Pulsa `t` para activarlo o desactivarlo; el robot responde `tank,on` o `tank,off`, lo aplica al instante y lo guarda en EEPROM. Sin nada guardado arranca activado.
-
-- **Activado (`tank,on`):** gira sobre su eje, con un lado hacia adelante y el otro hacia atras. Es el giro mas cerrado, pero arrastra las 4 ruedas de lado: con poca bateria los motores no tienen fuerza y el robot se queda quieto.
-- **Desactivado (`tank,off`):** gira con un lado detenido y el otro avanzando, en un arco corto. Pide menos fuerza, pero el robot avanza mientras gira.
+El robot las aplica en el siguiente ciclo de control, sin detener el recorrido, y responde `speeds,base,curva,interior`. Con un valor fuera de rango, o si la linea no tiene 3 numeros, responde `speeds,error` y no cambia nada.
 
 ### Ajustar el PID
 
-Pulsa `p` y escribe las tres ganancias separadas por espacios, por ejemplo `0.3 0 0.006`. El robot las aplica en el siguiente ciclo de control, sin detener el recorrido, las guarda en EEPROM y responde `pid,kp,ki,kd`. En cada arranque usa las guardadas; si nunca se guardo ninguna, usa las de `firmware/src/tasks/robot.h` (`0.25`, `0.0` y `0.005`). Cada ganancia debe estar entre `0` y `10`: fuera de ese rango, o si la linea no tiene 3 numeros, el robot responde `pid,error` y no cambia nada.
+Pulsa `p` y escribe las tres ganancias separadas por espacios, por ejemplo `0.152 0 0.001`. El robot las aplica en el siguiente ciclo de control, sin detener el recorrido, y responde `pid,kp,ki,kd`. Cada ganancia debe estar entre `0` y `10`: fuera de ese rango, o si la linea no tiene 3 numeros, el robot responde `pid,error` y no cambia nada.
 
-### Calibrar los sensores de linea
+### Calibrar con la consola
 
-Pulsa `c`. La calibracion es manual: los motores se detienen durante 10 segundos desde que aparece `calibration,start`, y hay que mover a mano los sensores sobre el fondo y sobre la linea para que cada uno registre ambos valores. El robot guarda en EEPROM la lectura minima (fondo) y maxima (linea) de cada sensor, fija cada umbral a un tercio de ese rango y envia un CSV con `sensor`, `min`, `max` y `threshold`. Un sensor que no llego a pasar por la linea (rango menor que 100) conserva sus valores anteriores. Los niveles guardados se cargan desde EEPROM en cada arranque. Si habia un recorrido en marcha, el robot lo retoma al terminar (`calibration,complete`).
+Deten antes el recorrido con `x` y deja el robot sobre la linea. Al pulsar `c` hace la misma calibracion que `CALIBRATE` (ver "Calibrar los sensores de linea") y aplica los umbrales. Mientras calibra no atiende otros comandos.
 
-Con Arduino CLI, el flujo equivalente es:
+## Puerto serie y registro
 
-```bash
-arduino-cli compile --fqbn <fabricante:arquitectura:placa> .
-arduino-cli upload -p <puerto> --fqbn <fabricante:arquitectura:placa> .
-```
+Los mensajes del robot y los comandos van por el puerto que elige `COMMANDS_OVER_USB` en `bluetooth_config.h`: `true` usa el cable USB de la Mega (`Serial`) y `false` el Bluetooth (`Serial1`), los dos a 9600 baudios. Por USB, abre la consola con el puerto COM de la Mega (`arduino-cli board list`), por ejemplo `.\scripts\console.ps1 -Port COM7`. El cable USB tambien alimenta el Arduino.
 
-Sustituye `<fabricante:arquitectura:placa>` y `<puerto>` por los valores de tu instalacion.
+El robot envia siempre estos mensajes, haya o no un registro:
 
-## Como funciona
+- `meta` al llegar a la meta.
+- `collision` al accionar la garra.
+- La salida de las calibraciones.
+- Las respuestas a los comandos (`run`, `pid`, `speeds` y `calibration`).
 
-`setup()` inicializa el puerto serie, configura todos los componentes, crea las tareas de servicio y empieza el recorrido. `loop()` queda vacio porque la logica corre en tareas de `Arduino_FreeRTOS`:
-
-| Tarea | Prioridad | Que hace |
-| --- | --- | --- |
-| `Start` (`start.h`) | 2 | Control: sigue la linea. Solo existe durante un recorrido: `setup()` la crea con `Robot::start()` al encender y se borra al terminar. `Telemetry` la borra al recibir `x` y la vuelve a crear al recibir `g`. |
-| `Calibration` (`telemetry.h`, `calibration.h`) | 2 | Duerme hasta que le piden calibrar. Con los motores detenidos, mide 10 segundos mientras se mueven los sensores a mano y guarda los niveles. |
-| `Telemetry` (`telemetry.h`) | 1 | La unica que usa el puerto serie: lee los comandos del PC y envia telemetria, eventos y el resultado de la calibracion. |
-
-Las tareas se comunican asi:
-
-- **Telemetria:** en cada ciclo, `Start` deja su ultima muestra en una cola de 1 elemento. `Telemetry` la recoge cada 6 ticks (unos 100 ms). Como tiene menos prioridad, un puerto lento nunca retrasa el control.
-- **Eventos:** `logger.event()` los guarda en una cola de 8 con su hora, y `Telemetry` los envia. Si la cola se llena, el evento se pierde.
-- **Calibracion:** al recibir `c`, `Telemetry` activa una peticion. `Start` la ve al empezar su siguiente ciclo, detiene los motores, despierta a `Calibration` y espera a que termine. Si `Start` no existe o ya se detuvo, `Telemetry` despierta a `Calibration` directamente.
-
-El ciclo de la tarea de control es `Robot::run()` en `start.h`: una lista de pasos, cada uno en su propia funcion del mismo archivo (`pass_start_line`, `check_line_lost`, `see_fork`, `follow_route`, `go_back_to_fork`). Lo que la tarea recuerda entre ciclos esta en `RunState`, y los tiempos del recorrido son las constantes del principio de `start.h`. En cada iteracion:
-
-1. Calcula la posicion de la linea con los sensores izquierdo, central y derecho. Cada lectura se convierte a un nivel entre 0 (fondo) y 1000 (linea centrada) con los valores de la calibracion, y la posicion es el promedio ponderado por nivel: una linea que queda entre dos sensores da un error intermedio. La linea se da por perdida si ningun sensor llega al nivel 180 (`LINE_MIN_LEVEL` en `line_sensors.h`). Los umbrales solo se usan para reconocer bifurcaciones y lineas horizontales.
-2. Usa `PID_v1` para convertir ese error en una correccion diferencial de los motores.
-   Si la linea esta solo bajo un sensor lateral (error de `EDGE_ERROR` o mas, en `line_follower.h`), deja de avanzar y gira hacia ese lado hasta que la linea llega al sensor central: asi se vuelve a centrar en vez de seguir la curva con el sensor lateral.
-3. Si la linea esta solo bajo el sensor central (error menor que `ZIGZAG_MAX_ERROR`), serpentea: alterna un giro suave a cada lado cada `ZIGZAG_TIME_MS` para que un sensor lateral encuentre la linea antes de perderla. La amplitud es `ZIGZAG_SPEED`; los tres parametros estan en `line_follower.h`.
-4. Recuerda el lado donde vio la linea por ultima vez. Si la pierde, gira hacia ese lado hasta encontrarla. Con el giro tipo tanque activado gira sobre su eje, con un lado hacia adelante y el otro hacia atras; desactivado, gira con un lado detenido y el otro avanzando, y al corregir la rueda interior se detiene en vez de ir hacia atras (ver "Giro tipo tanque").
-5. Si hay un registro activo, publica la muestra del ciclo para la tarea de telemetria. Despues espera 2 ticks de FreeRTOS (unos 32 ms). La deteccion de obstaculos esta desactivada por ahora.
-
-Ademas, reacciona a estos casos:
-
-- **Zona de inicio:** durante un maximo de `START_ZONE_MS`, avanza recto hasta encontrar la linea y cruza la linea horizontal de inicio sin tomarla por la meta. Debe colocarse mirando hacia esa linea y centrado con ella.
-- **Linea horizontal (los 3 sensores):** la cruza en linea recta. Si despues ve linea en algun sensor lateral sin el central, era el vertice de una Y. Si detras no hay linea, es la meta y se detiene. Si la linea continua, sigue el recorrido. Una T se confunde con la meta. Si los 3 sensores siguen activos mas de 1 s, se detiene hasta que la lectura cambie.
-- **Bifurcacion en Y (los dos sensores laterales ven linea con menos de `SIDE_SEEN_MS` de diferencia):** la guarda en `RouteMemory`, gira hacia `preferred_route`, definida en `seguidor_de_linea.ino`, y enciende 1 s el LED de esa ruta.
-- **Callejon sin salida:** si recuperar la linea exige girar `NO_EXIT_TURN_MS` o mas, el robot ya dio media vuelta y sigue la linea de regreso hasta la bifurcacion. Alli marca la rama como visitada y toma la otra. Si las dos ramas no tienen salida, vuelve a la bifurcacion anterior. Se detiene con `no_route` si no quedan opciones y con `fork_missed` si tarda demasiado en volver a la Y. No admite recorridos con bucles.
-- **Objeto a menos de 15 cm:** se detiene, avanza con la garra abierta, cierra, gira a la derecha, suelta el objeto, emite un beep y vuelve a la linea. Los tiempos y distancias estan en `firmware/src/tasks/collision.h` y deben ajustarse al robot.
-
-Las ganancias del PID se cambian desde el PC y se guardan en EEPROM (ver "Ajustar el PID"); sus valores iniciales (`0.25`, `0.0` y `0.005`) estan en `firmware/src/tasks/robot.h`. `PID_v1` divide `Kd` entre el periodo en segundos, asi que `Kd` debe ser mucho menor que `Kp`. Las velocidades tambien se cambian desde el PC (ver "Ajustar las velocidades").
+El comando `r` empieza un registro: el robot responde `recording,ms,start`, los umbrales en uso (`thresholds,s0,s1,s2`), las ganancias (`pid,kp,ki,kd`) y las velocidades (`speeds,base,curva,interior`), y la consola guarda todo lo que llega en `logs\run-AAAAMMDD-HHMMSS.csv`, un archivo nuevo por registro, hasta que pulsas `s` o sales con `q`. El robot ya no envia filas de telemetria (`t,...`) ni eventos: `Logger::telemetry()` y `Logger::event()` existen, pero ningun comportamiento los llama.
 
 ## Configurar el Bluetooth
 
-El nombre y la velocidad del HC-05 estan en `bluetooth_config.h`. Para aplicarlos:
+El nombre y la velocidad del HC-05 estan en `bluetooth_config.h` (`BLUETOOTH_NAME` y `BLUETOOTH_BAUD`). La clase `Hc05` (`components/hc05.h`) los envia con comandos AT a 38400 baudios, pero el sketch actual no la usa: `BLUETOOTH_SETUP_MODE` ya no tiene efecto. Para cambiar el nombre o la velocidad hay que volver a llamar, desde `setup()`, a `bluetooth.setup()` y `bluetooth.configure(BLUETOOTH_NAME, BLUETOOTH_BAUD)` sin crear las tareas, con el modulo en modo AT:
 
-1. Edita `BLUETOOTH_NAME`, deja `BLUETOOTH_SETUP_MODE` en `true` y sube el sketch por USB.
-2. Abre el monitor del puerto USB de la Mega a `9600` baudios.
-3. Pon el HC-05 en modo AT: desconecta su `VCC`, mantén pulsado su boton, vuelve a conectar `VCC` y suelta el boton. Su LED debe parpadear lento, cada 2 segundos aproximadamente.
-4. Pulsa RESET en la Mega. El monitor debe terminar con `bluetooth,ok`.
-5. Desconecta y vuelve a conectar el `VCC` del HC-05 para salir del modo AT.
-6. Cambia `BLUETOOTH_SETUP_MODE` a `false` y vuelve a subir el sketch.
+1. Desconecta el `VCC` del HC-05, mantén pulsado su boton, vuelve a conectar `VCC` y suelta el boton. Su LED debe parpadear lento, cada 2 segundos aproximadamente.
+2. Abre el monitor del puerto USB de la Mega a `9600` baudios y pulsa RESET en la Mega. Cada comando debe responder `OK`.
+3. Desconecta y vuelve a conectar el `VCC` del HC-05 para salir del modo AT, y vuelve a cargar el sketch normal.
 
 Si Windows ya tenia vinculado el modulo, quitalo y vinculalo de nuevo para ver el nombre nuevo.
-
-## Telemetria
-
-Los comandos y la telemetria van por el puerto que elige `COMMANDS_OVER_USB` en `bluetooth_config.h`: `true` usa el cable USB de la Mega (`Serial`) y `false` el Bluetooth (`Serial1`), los dos a 9600 baudios. Por USB, abre la consola con el puerto COM de la Mega (`arduino-cli board list`), por ejemplo `.\scripts\console.ps1 -Port COM7`. El cable USB tambien alimenta el Arduino.
-
-El robot no envia telemetria ni eventos hasta que el PC le pide un registro: el comando `r` lo empieza y `s` lo detiene. En la consola (`scripts\console.ps1`, ver "Comandos desde el PC"), `r` guarda ademas todo lo que llega en `logs\run-AAAAMMDD-HHMMSS.csv`, un archivo nuevo por registro, hasta que pulsas `s` o sales con `q`.
-
-Cada registro empieza con `recording,ms,start`, los umbrales en uso (`thresholds,s0,s1,s2`), las ganancias del PID (`pid,kp,ki,kd`), las velocidades (`speeds,base,giro,minima`), el giro tipo tanque (`tank,on` o `tank,off`), el motivo de la ultima detencion (`last_stop,ms,motivo` o `last_stop,none`) y la cabecera de columnas. Despues, cada linea es de uno de estos tipos:
-
-- Telemetria, unas 10 filas por segundo: `t,ms,s0,s1,s2,error,correction,left,right,line`. `ms` es la hora en que el control tomo la muestra.
-- Ganancias del PID, al consultarlas o cambiarlas: `pid,kp,ki,kd` o `pid,error`.
-- Velocidades, al consultarlas o cambiarlas: `speeds,base,giro,minima` o `speeds,error`.
-- Giro tipo tanque, al cambiarlo y en la cabecera: `tank,on` o `tank,off`.
-- Ultima detencion, en la cabecera: `last_stop,ms,motivo`, con el mismo motivo que el evento (`finish`, `invalid_reading`, `fork_missed`, `no_route` o `memory_full`), o `last_stop,none`. El robot lo recuerda aunque el evento se haya perdido por no haber registro activo o por un corte del Bluetooth: para verlo, pulsa `r` despues de que se detenga. Se borra al empezar otro recorrido.
-- Inicio y fin de recorrido pedidos desde el PC: `run,ms,start`, `run,ms,ignored` o `run,ms,stop`.
-- Evento: `event,ms,nombre`, donde `nombre` es `route_left`, `route_right`, `dead_end`, `back_to_stem`, `object_detected`, `object_removed`, `invalid_reading`, `no_route`, `fork_missed`, `memory_full` o `finish`.
 
 ## Flujo de desarrollo
 
 1. Crea una rama para cada cambio.
-2. Ejecuta el script de enlace una vez y conserva `firmware/` como fuente de verdad; no edites la copia instalada en el sketchbook.
-3. Haz cambios pequenos en el componente responsable.
+2. Conserva `firmware/` como fuente de verdad; no edites la copia instalada en el sketchbook.
+3. Haz cambios pequenos en el componente o comportamiento responsable.
 4. Compila el sketch antes de probar en el robot.
 5. Prueba primero con las ruedas elevadas y luego en una zona despejada.
 6. Documenta en el pull request los pines, parametros calibrados y pruebas realizadas.
@@ -271,8 +314,10 @@ Antes de abrir un pull request, comprueba:
 
 ## Ideas pendientes
 
+- Emitir un beep al derribar un objeto, como piden las reglas (`COMPETENCIA.md`).
+- Apagar los dos LEDs cuando el robot va recto, como piden las reglas, en vez de encender los dos.
+- Detener o frenar el robot mientras la garra retira el objeto.
+- Volver a enviar telemetria durante un registro, o quitar la columna de telemetria de la consola.
+- Recuperar un modo para configurar el HC-05 desde el sketch.
 - Implementar la lectura del sensor RGB real.
-- Añadir una tabla de placa, driver de motores y esquema de cableado.
-- Separar la logica de control de hardware para poder probarla sin el robot.
-- Añadir mensajes de diagnostico por puerto serie.
-- Añadir pruebas para el calculo del error de los sensores de linea y la deteccion de color.
+- Añadir pruebas para el calculo del error de los sensores de linea.

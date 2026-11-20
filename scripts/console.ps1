@@ -1,12 +1,13 @@
 # Consola del robot: muestra todo lo que envia por Bluetooth y le manda comandos con
 # una tecla. Reintenta la conexion si falla o si se corta.
 #
+# El robot debe tener COMMANDS en 1 (seguidor_de_linea.ino).
+#
 #   g  empezar otro recorrido (cuando el anterior ya termino o se detuvo con x)
 #   x  detener el recorrido en marcha
-#   t  activar o desactivar el giro tipo tanque (sobre su eje); queda guardado en el robot
 #   c  calibrar los sensores de linea
-#   p  ver o cambiar las ganancias del PID (Kp Ki Kd); quedan guardadas en el robot
-#   b  ver o cambiar las velocidades (base, giro, minima); quedan guardadas en el robot
+#   p  ver o cambiar las ganancias del PID (Kp Ki Kd) hasta que se apague el robot
+#   b  ver o cambiar las velocidades (base, curva, interior) hasta que se apague el robot
 #   r  empezar un registro y guardarlo en logs\run-AAAAMMDD-HHMMSS.csv
 #   s  detener el registro y cerrar el CSV
 #   v  mostrar u ocultar las filas de telemetria (se guardan igual)
@@ -19,10 +20,9 @@ param(
     [string]$LogDirectory = "logs"
 )
 
-# Deben coincidir con las constantes de Logger (firmware/src/components/logger.h).
+# Deben coincidir con las constantes de firmware/src/commands/commands.h.
 $runCommand = "g"
 $haltCommand = "x"
-$tankCommand = "t"
 $gainsCommand = "p"
 $speedsCommand = "b"
 $calibrateCommand = "c"
@@ -105,8 +105,7 @@ function Show-Help {
     Write-Host ""
     Write-Host "  g  empezar otro recorrido        x  detener el recorrido" -ForegroundColor White
     Write-Host "  c  calibrar sensores             p  ver/cambiar Kp Ki Kd" -ForegroundColor White
-    Write-Host "  b  ver/cambiar velocidades (base, giro, minima)" -ForegroundColor White
-    Write-Host "  t  giro tipo tanque: activar/desactivar" -ForegroundColor White
+    Write-Host "  b  ver/cambiar velocidades (base, curva, interior)" -ForegroundColor White
     Write-Host "  r  grabar registro en CSV        s  detener registro" -ForegroundColor White
     Write-Host "  v  mostrar/ocultar telemetria    h  ayuda    q  salir" -ForegroundColor White
     Write-Host ""
@@ -223,7 +222,6 @@ function Write-RobotLine([string]$line) {
         "run" { Write-Host $line -ForegroundColor Green }
         "pid" { Write-Host $line -ForegroundColor Magenta }
         "speeds" { Write-Host $line -ForegroundColor Magenta }
-        "tank" { Write-Host $line -ForegroundColor Magenta }
         "last_stop" { Write-Host $line -ForegroundColor Yellow }
         "recording" { Write-Host $line -ForegroundColor Green }
         default { Write-Host $line }
@@ -308,22 +306,18 @@ try {
                 Write-Host "> detener recorrido" -ForegroundColor White
                 Send-Command $haltCommand
             }
-            "t" {
-                Write-Host "> cambiar giro tipo tanque" -ForegroundColor White
-                Send-Command $tankCommand
-            }
             "p" {
-                Write-Host "> ganancias PID. Escribe Kp Ki Kd separados por espacios (p. ej. 0.25 0 0.005)," -ForegroundColor White
+                Write-Host "> ganancias PID. Escribe Kp Ki Kd separados por espacios (p. ej. 0.152 0 0.001)," -ForegroundColor White
                 Write-Host "  o solo Enter para ver las actuales." -ForegroundColor White
                 Send-Values $gainsCommand "Kp Ki Kd"
             }
             "b" {
-                Write-Host "> velocidades (0 a 255). Escribe base, giro y minima separadas por espacios (p. ej. 150 230 110)," -ForegroundColor White
+                Write-Host "> velocidades. Escribe base, curva e interior separadas por espacios (p. ej. 92 0 0)," -ForegroundColor White
                 Write-Host "  o solo Enter para ver las actuales." -ForegroundColor White
-                Send-Values $speedsCommand "Base Giro Minima"
+                Send-Values $speedsCommand "Base Curva Interior"
             }
             "c" {
-                Write-Host "> calibrar: cuando aparezca 'calibration,start', pasa a mano los sensores sobre el fondo y la linea durante 10 segundos" -ForegroundColor White
+                Write-Host "> calibrar: con el recorrido detenido (x), el robot gira sobre su eje 4 segundos sobre la linea" -ForegroundColor White
                 Send-Command $calibrateCommand
             }
             "r" {

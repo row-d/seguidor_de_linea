@@ -2,234 +2,121 @@
 #define LINE_SENSORS_H
 #include "component.h"
 
-template <size_t N>
+template <size_t N = 3>
 class LineSensors : public Component
 {
 public:
-    enum State
+    // line_error() da -MAX_ERROR bajo el primer sensor y MAX_ERROR bajo el ultimo.
+    static const int MAX_ERROR = 2000;
+
+    // Lecturas minima (fondo) y maxima (linea) de cada sensor durante una calibracion.
+    struct Calibration
     {
-        NONE,
-        LEFT,
-        RIGHT,
-        MIDDLE,
-        INTERSECTION
+        int min_read[N];
+        int max_read[N];
+
+        Calibration()
+        {
+            for (size_t i = 0; i < N; ++i)
+            {
+                min_read[i] = 1023;
+                max_read[i] = 0;
+            }
+        }
+
+        int threshold(size_t i) const
+        {
+            return min_read[i] + (max_read[i] - min_read[i]) / 3;
+        }
     };
 
-    // Niveles en milesimas del rango fondo-linea de cada sensor (ver line_level).
-    // Por debajo de NOISE_LEVEL una lectura es ruido del fondo y no cuenta.
-    static const int NOISE_LEVEL = 100;
-    // Si ningun sensor llega a este nivel, la linea esta perdida.
-    static const int LINE_MIN_LEVEL = 180;
-
 private:
-    // Lectura a partir de la cual un sensor esta claramente sobre la linea: se usa
-    // para reconocer bifurcaciones y lineas horizontales, no para seguir la linea.
     int line_thresholds[N];
-    // Lectura de cada sensor sobre el fondo y sobre el centro de la linea.
-    int white_levels[N];
-    int black_levels[N];
     const int (&sensor_pins)[N];
 
-    bool detects_line(size_t sensor_index)
-    {
-        return analogRead(sensor_pins[sensor_index]) >= line_thresholds[sensor_index];
-    }
-
-    // Cuanto ve la linea un sensor: 0 sobre el fondo, 1000 con la linea centrada.
-    // A diferencia del umbral, tambien mide una linea que solo roza el sensor.
-    int line_level(size_t sensor_index)
-    {
-        const long range = black_levels[sensor_index] - white_levels[sensor_index];
-        if (range <= 0)
-            return 0;
-
-        const long level = (analogRead(sensor_pins[sensor_index]) - white_levels[sensor_index]) * 1000L / range;
-        return constrain(level, 0, 1000);
-    }
-
-    bool only_sensor(size_t sensor_index)
-    {
-        for (size_t index = 0; index < N; ++index)
-        {
-            if (index == sensor_index)
-                continue;
-            if (detects_line(index))
-                return false;
-        }
-        return detects_line(sensor_index);
-    }
-
 public:
-    LineSensors(const int (&pins)[N], int threshold = 130) : sensor_pins(pins)
-    {
-        for (size_t index = 0; index < N; ++index)
-            set_threshold(index, threshold);
-    }
-
     LineSensors(const int (&pins)[N], const int (&thresholds)[N]) : sensor_pins(pins)
     {
-        for (size_t index = 0; index < N; ++index)
-            set_threshold(index, thresholds[index]);
+        for (size_t i = 0; i < N; ++i)
+            line_thresholds[i] = thresholds[i];
     }
 
     void setup()
     {
         for (size_t i = 0; i < N; ++i)
-        {
-            // Sin pull-up: con un cable flojo la lectura subia sola y parecia linea.
             pinMode(sensor_pins[i], INPUT);
-        }
     }
 
-    bool left_detected()
+    int raw_read(size_t i)
     {
-        return only_sensor(0);
+        return analogRead(sensor_pins[i]);
     }
 
-    bool right_detected()
+    int threshold(size_t i) const
     {
-        return only_sensor(N - 1);
+        return line_thresholds[i];
     }
 
-    bool middle_detected()
+    bool detects_line(size_t i)
     {
-        const size_t middle_index = N / 2;
-        if (N % 2 == 1)
+        return raw_read(i) >= line_thresholds[i];
+    }
+
+    size_t count_on_line()
+    {
+        size_t count = 0;
+        for (size_t i = 0; i < N; ++i)
+            count += detects_line(i);
+        return count;
+    }
+
+    // Lee todos los sensores: el valor de cada uno y si supera su umbral.
+    void read(int (&values)[N], bool (&black)[N])
+    {
+        for (size_t i = 0; i < N; ++i)
         {
-            return only_sensor(middle_index);
+            values[i] = raw_read(i);
+            black[i] = values[i] >= line_thresholds[i];
         }
-        else
+    }
+
+    // Posicion de la linea con los sensores marcados en black, ponderada por su lectura.
+    // Una linea entre dos sensores da un error intermedio. Devuelve false sin linea.
+    static bool line_error(const int (&values)[N], const bool (&black)[N], int &error)
+    {
+        // long: en AVR int es de 16 bits y value * 2000 desborda.
+        long sum = 0;
+        long total = 0;
+        for (size_t i = 0; i < N; ++i)
         {
-            for (size_t index = 0; index < N; ++index)
-            {
-                if (index == middle_index || index == middle_index - 1)
-                    continue;
-                if (detects_line(index))
-                    return false;
-            }
-
-            return detects_line(middle_index) || detects_line(middle_index - 1);
+            const long weight = black[i] ? values[i] : 0;
+            sum += (long)(2 * (int)i - (int)(N - 1)) * MAX_ERROR / (int)(N - 1) * weight;
+            total += weight;
         }
-    }
-
-    int raw_read(size_t sensor_index = 0)
-    {
-        return analogRead(sensor_pins[sensor_index]);
-    }
-
-    bool sensor_detected(size_t sensor_index)
-    {
-        return detects_line(sensor_index);
-    }
-
-    int central_raw()
-    {
-        return raw_read(N / 2);
-    }
-
-    int central_threshold()
-    {
-        return line_thresholds[N / 2];
-    }
-
-    // Fija el umbral sin conocer los niveles: los estima suponiendo un fondo en 0.
-    void set_threshold(size_t sensor_index, int threshold)
-    {
-        line_thresholds[sensor_index] = threshold;
-        white_levels[sensor_index] = 0;
-        black_levels[sensor_index] = threshold * 3;
-    }
-
-    // Fija los niveles medidos en la calibracion. El umbral queda a un tercio del
-    // rango y no a la mitad: black se mide con el sensor justo encima de la linea,
-    // pero al seguirla la lectura baja bastante.
-    void set_levels(size_t sensor_index, int white, int black)
-    {
-        white_levels[sensor_index] = white;
-        black_levels[sensor_index] = black;
-        line_thresholds[sensor_index] = white + (black - white) / 3;
-    }
-
-    int white_level(size_t sensor_index)
-    {
-        return white_levels[sensor_index];
-    }
-
-    int black_level(size_t sensor_index)
-    {
-        return black_levels[sensor_index];
-    }
-
-    int threshold(size_t sensor_index)
-    {
-        return line_thresholds[sensor_index];
-    }
-
-    // Posicion de la linea: -1000 bajo el sensor izquierdo, 0 en el centro y 1000 bajo
-    // el derecho. Pondera cada sensor por su nivel, asi una linea que queda entre dos
-    // sensores da un error intermedio en vez de perderse. Devuelve false sin linea.
-    bool read_line_error(int &error)
-    {
-        long weighted_position = 0;
-        long total_strength = 0;
-        int strongest = 0;
-
-        for (size_t index = 0; index < N; ++index)
-        {
-            const int strength = line_level(index);
-            if (strength > strongest)
-                strongest = strength;
-            if (strength < NOISE_LEVEL)
-                continue;
-
-            const long position = N == 1
-                                      ? 0
-                                      : -1000L + (2000L * index) / (N - 1);
-            weighted_position += position * strength;
-            total_strength += strength;
-        }
-
-        if (strongest < LINE_MIN_LEVEL)
+        if (total == 0)
             return false;
-
-        error = weighted_position / total_strength;
+        error = sum / total;
         return true;
     }
 
-    bool intersection_detected()
+    void sample_calibration(Calibration &cal)
     {
-        const bool center = N % 2 == 1
-                                ? detects_line(N / 2)
-                                : detects_line(N / 2) || detects_line(N / 2 - 1);
-        return detects_line(0) && detects_line(N - 1) && !center;
-    }
-
-    bool all_detected()
-    {
-        for (size_t index = 0; index < N; ++index)
+        for (size_t i = 0; i < N; ++i)
         {
-            if (!detects_line(index))
-                return false;
+            const int value = raw_read(i);
+            cal.min_read[i] = min(cal.min_read[i], value);
+            cal.max_read[i] = max(cal.max_read[i], value);
         }
-        return true;
     }
 
-    State read()
+    // Un sensor que casi no cambio no vio la linea: conserva su umbral.
+    void apply_calibration(const Calibration &cal)
     {
-        const bool left = left_detected();
-        const bool middle = middle_detected();
-        const bool right = right_detected();
-        const bool intersection = intersection_detected();
-
-        if (intersection)
-            return INTERSECTION;
-        if (middle)
-            return MIDDLE;
-        if (left)
-            return LEFT;
-        if (right)
-            return RIGHT;
-        return NONE;
+        for (size_t i = 0; i < N; ++i)
+        {
+            if (cal.max_read[i] - cal.min_read[i] > 100)
+                line_thresholds[i] = cal.threshold(i);
+        }
     }
 };
 

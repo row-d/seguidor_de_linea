@@ -31,12 +31,19 @@ public:
         set_led(index, true);
     }
 
+    // LED 0 izquierdo y 1 derecho: enciende el del lado hacia el que gira, o los dos si
+    // la diferencia entre ruedas no pasa de straight_deadband. Gira hacia la rueda lenta.
+    void show_turn(int speed_l, int speed_r, int straight_deadband)
+    {
+        const int diff = speed_r - speed_l;
+        set_led(0, diff >= -straight_deadband);
+        set_led(1, diff <= straight_deadband);
+    }
+
     void turn_off_all()
     {
         for (size_t i = 0; i < N; ++i)
-        {
-            digitalWrite(pins[i], LOW);
-        }
+            set_led(i, false);
     }
 
 private:
